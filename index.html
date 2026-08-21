@@ -1,0 +1,1742 @@
+<!doctype html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport">
+    <title>EC 統計系統</title>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              ms: {
+                blue: "#0078d4", // 微軟藍
+                dark: "#005a9e",
+                bg: "#f3f2f1", // 淺灰背景
+                text: "#323130",
+              },
+            },
+          },
+        },
+      };
+    </script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/rizmyabdulla/fontawesome-pro@main/releases/v6.7.2/css/fontawesome.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/rizmyabdulla/fontawesome-pro@main/releases/v6.7.2/css/solid.css">
+
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/zh-tw.js"></script>
+    <style>
+      :root {
+        --ms-blue: #0078d4;
+        --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
+        --transition-fast: 0.2s;
+      }
+
+      body { font-family: "Segoe UI", "Microsoft JhengHei", sans-serif; }
+
+      /* 捲軸隱藏與優化 */
+      .no-scrollbar::-webkit-scrollbar { display: none; }
+      .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+      /* 動畫定義 */
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(5px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      @keyframes slideIn {
+        from { transform: translateX(100%); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+      }
+
+      /* 頁面切換邏輯 */
+      .page:not(.active) { display: none !important; }
+      .page.active { animation: fadeIn 0.3s ease-out; }
+      .toast-enter { animation: slideIn 0.3s ease-out; }
+      /* 髒資料行樣式 - 黃色底色 */
+      tr.row-dirty { background-color: #fef9c3; }
+      tr.row-dirty:hover { background-color: #fef08a; }
+      
+      /* 表格輸入框樣式 */
+      .table-input{width:100%;background-color:transparent;border-bottom:1px solid transparent;padding:0 4px;transition:all var(--transition-fast);border-radius:0}.table-input:hover{background-color:#fff;border-bottom-color:#d1d5db}.table-input:focus{outline:0;border-bottom-color:var(--ms-blue);background-color:#fff}.table-input[disabled],.table-input[readonly]{background-color:transparent!important;border-bottom:none!important;color:#374151;cursor:default}
+
+      select.table-input[disabled]{-webkit-appearance:none;-moz-appearance:none;appearance:none;opacity:1;color:#374151}
+      textarea.table-input{field-sizing:content;overflow:hidden;resize:none;min-height:24px;transition:none}
+
+      /* 按鈕樣式 */
+      .btn,.btn-primary,.btn-success,.btn-upload{font-weight:700;padding:.5rem 1rem;display:inline-flex;gap:.5rem}.btn{border-radius:.375rem;box-shadow:var(--shadow-sm);transition:.2s;align-items:center;justify-content:center;cursor:pointer;border:1px solid transparent}.btn-primary,.btn-success{color:#fff;align-items:center}.btn-primary,.btn-success,.btn-upload{border-radius:.375rem;box-shadow:0 1px 2px rgba(0,0,0,.1);transition:background-color .2s}.btn-primary{background-color:#0078d4;justify-content:center}.btn-primary:hover{background-color:#005a9e}.btn-success{background-color:#16a34a;justify-content:center}.btn-success:hover{background-color:#15803d}.btn-upload{background-color:#e0e0e0;color:#0078d4;align-items:center;justify-content:center}.btn-upload:hover{background-color:#9e9e9e}
+
+      /* 權限控制 */
+      .auth-only { display: none !important; }
+
+      /* 表頭欄位拖曳排序 */
+      thead th[data-column-id] { transition: background-color 0.15s; }
+      thead th[data-column-id]:not(.no-drag) { cursor: move; }
+      thead th[data-column-id]:not(.no-drag):hover { background-color: #e0f2fe !important; }
+      thead th.sortable-ghost {opacity: 0.4;background-color: #bfdbfe !important;}
+      thead th.sortable-chosen { 
+        background-color: #dbeafe !important;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      }
+      thead th.no-drag { cursor: default; }
+
+      /* 表頭文字可選取 */
+      thead th .th-text { cursor: text; user-select: text; }
+
+      /* 排序圖示 - 顯示可點擊游標 */
+      thead th span[id^="sort_"],
+      thead th span[id^="sort_"] i { cursor: pointer; }
+
+      /* 表格凍結標頭與欄位 */
+      .sticky-corner,thead,tr:hover .sticky-col-cell{background-color:#f9fafb}.sticky-col-cell,.sticky-corner{position:sticky;left:0;box-shadow:2px 0 5px -2px rgba(0,0,0,.1)}.sticky-no-shadow{box-shadow:none!important;border-right:none!important}thead{position:sticky;top:0;z-index:40}.sticky-corner{top:0;z-index:50!important;background-color:#f9fafb!important}.sticky-corner:hover{background-color:#f3f4f6!important}.sticky-col-cell{z-index:30;background-color:#fff;border-right:2px solid #e5e7eb}
+
+      /* ===== Flatpickr ===== */
+      /* 容器定位 */
+      .flatpickr-calendar{position:absolute;z-index:99999;display:none;box-sizing:border-box;width:auto;background:#fff;border:1px solid #e4e4e7;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.08);font-size:14px;font-family:inherit;color:#09090b;padding:12px;user-select:none;-webkit-user-select:none}.flatpickr-calendar.open{display:inline-block}.flatpickr-calendar.inline{display:block;position:relative}.flatpickr-calendar:after,.flatpickr-calendar:before{display:none}
+
+      /* 內部容器 */
+      .flatpickr-innerContainer,.flatpickr-rContainer{display:flex;flex-direction:column;width:224px;box-sizing:border-box}
+
+      /* 頂部導航列 */
+      .flatpickr-months{display:flex;align-items:center;justify-content:space-between;padding:0 0 10px;width:224px}.flatpickr-months .flatpickr-month{flex:1;display:flex;align-items:center;justify-content:center;height:28px;background:0 0;color:#09090b;overflow:visible}.flatpickr-current-month{display:inline-flex;align-items:center;gap:2px;font-size:14px;font-weight:600;color:#09090b;padding:0;position:static;width:auto;left:auto}.flatpickr-current-month .numInputWrapper{display:inline-flex;width:50px}.flatpickr-current-month .numInputWrapper span{display:none}.flatpickr-current-month input.cur-year{font-weight:600;font-size:14px;color:#09090b;background:0 0;border:none;padding:0;margin:0;cursor:default;-moz-appearance:textfield;width:48px}.flatpickr-current-month input.cur-year:focus,.flatpickr-current-month select.flatpickr-monthDropdown-months:focus{outline:0}.flatpickr-current-month select.flatpickr-monthDropdown-months{font-weight:600;font-size:14px;color:#09090b;background:0 0;border:none;cursor:pointer;padding:0;margin:0;-webkit-appearance:none;appearance:none}
+
+      /* 上/下月切換按鈕 */
+      .flatpickr-months .flatpickr-next-month,.flatpickr-months .flatpickr-prev-month{position:static;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex-shrink:0;border-radius:6px;background:0 0;cursor:pointer;transition:background .15s;padding:0;text-decoration:none}.flatpickr-months .flatpickr-next-month:hover,.flatpickr-months .flatpickr-prev-month:hover{background:#f4f4f5}.flatpickr-months .flatpickr-next-month svg,.flatpickr-months .flatpickr-prev-month svg{display:none}.flatpickr-months .flatpickr-next-month::after,.flatpickr-months .flatpickr-prev-month::after{content:"";display:block;width:16px;height:16px;background-size:contain;background-repeat:no-repeat;background-position:center}.flatpickr-months .flatpickr-prev-month::after{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2309090b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m15 18-6-6 6-6'/%3E%3C/svg%3E")}.flatpickr-months .flatpickr-next-month::after{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2309090b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 18 6-6-6-6'/%3E%3C/svg%3E")}
+
+      /* 星期標題列 */
+      .flatpickr-weekdaycontainer,.flatpickr-weekdays{display:flex;width:224px}.flatpickr-weekdays{align-items:center;height:28px}.flatpickr-weekday{width:32px;max-width:32px;flex-shrink:0;text-align:center;font-size:12px;font-weight:400;color:#71717a;cursor:default}
+
+      /* 日期格子容器 */
+      .flatpickr-days{width:224px}.dayContainer{display:flex;flex-wrap:wrap;width:224px;min-width:224px;max-width:224px;padding:0;box-sizing:border-box}
+
+      /* 每個日期格子 */
+      .flatpickr-day{display:flex;align-items:center;justify-content:center;width:32px;max-width:32px;flex-basis:32px;flex-shrink:0;flex-grow:0;height:32px;box-sizing:border-box;border-radius:6px;border:1px solid transparent;font-size:12px;font-weight:400;color:#09090b;cursor:pointer;transition:background .1s}
+
+      /* 選中、今天、hover */
+      .flatpickr-day.selected,.flatpickr-day.selected:focus,.flatpickr-day.selected:hover,.flatpickr-day.today:not(.selected),.flatpickr-day:hover:not(.selected):not(.disabled){width:28px;height:28px;max-width:28px;border-radius:6px;align-self:center;margin:auto}
+
+      /* 選中 */
+      .flatpickr-day.selected,.flatpickr-day.selected:focus,.flatpickr-day.selected:hover{background:#0078d4;border-color:#0078d4;color:#fff;font-weight:500}
+
+      /* 今天 */
+      .flatpickr-day.today:not(.selected){background:0 0;border:1px solid #0078d4;color:#0078d4;font-weight:600}.flatpickr-day.today:not(.selected):hover{background:#eff6ff}
+
+      /* 滑鼠懸停 */
+      .flatpickr-day:hover:not(.selected):not(.disabled):not(.today){background:#f4f4f5;border-color:transparent;color:#09090b}
+
+      /* 非當月日期 */
+      .flatpickr-day.nextMonthDay,.flatpickr-day.prevMonthDay{color:#d4d4d8;pointer-events:none}
+
+      /* 停用 */
+      .flatpickr-day.disabled,.flatpickr-day.disabled:hover{color:#d4d4d8;cursor:not-allowed;background:0 0}
+
+      /* 月度績效表格對齊 */
+      #yearlyTable td { vertical-align: middle; }
+      #yearlyTable td > span:first-child {
+        display: inline-block;
+        min-width: 20px;
+        text-align: right;
+      }
+      #yearlyTable td .pct {
+        display: inline-block;
+        min-width: 32px;
+        text-align: right;
+        margin-left: 4px;
+      }
+
+      /* 同步狀態樣式 */
+      .sync-status{display:flex;align-items:center;gap:6px;font-size:12px;padding:4px 10px;border-radius:4px;background:rgba(255,255,255,.1)}.sync-status.syncing{color:#fbbf24}.sync-status.success{color:#4ade80}.sync-status.stale{color:#fb923c}.sync-spinner{width:12px;height:12px;border:2px solid transparent;border-top-color:currentColor;border-radius:50%;animation:.8s linear infinite spin}
+
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      /* 一般的高亮動畫 */
+      @keyframes highlightFade {
+        0% { background-color: #fef08a; }
+        50% { background-color: #fde047; }
+        100% { background-color: transparent; }
+      }
+
+      /* Dirty 的高亮動畫 */
+      @keyframes highlightFadeDirty {
+        0% { background-color: #fde047; }
+        30% { background-color: #facc15; }
+        100% { background-color: #fef9c3; }
+      }
+
+      .highlight-row { animation: 2s ease-out highlightFade; }
+      tr.row-dirty.highlight-row { animation: 2s ease-out highlightFadeDirty; }
+
+      /* 搜尋語法提示 Modal */
+      .search-help-modal{position:fixed;inset:0;z-index:200;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.5)}.search-help-modal.show{display:flex}.search-help-content{background:#fff;border-radius:12px;box-shadow:0 20px 40px rgba(0,0,0,.2);max-width:520px;width:90%;max-height:80vh;overflow-y:auto}.search-help-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #e5e7eb}.search-help-header h3{font-size:16px;font-weight:700;color:#1f2937}.search-help-close{width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:8px;color:#6b7280;cursor:pointer;transition:background .2s}.search-help-close:hover{background:#f3f4f6}.search-help-body{padding:20px}.search-help-section{margin-bottom:20px}.search-help-section:last-child{margin-bottom:0}.search-help-section h4{font-size:13px;font-weight:600;color:#374151;margin-bottom:10px;display:flex;align-items:center;gap:6px}.search-help-table{width:100%;font-size:12px;border-collapse:collapse}.search-help-table td{padding:8px 10px;border-bottom:1px solid #f3f4f6}.search-help-table tr:last-child td{border-bottom:none}.search-help-table td:first-child{width:45%;font-family:Consolas,Monaco,monospace;color:#0078d4;background:#f8fafc;border-radius:4px}.search-help-table td:last-child{color:#6b7280}
+
+      /* 搜尋框提示按鈕 */
+      .search-help-btn{display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;color:#9ca3af;cursor:pointer;transition:.2s}
+      .search-help-btn:hover { background: #f3f4f6; color: #0078d4; }
+    </style>
+  </head>
+
+  <body class="flex flex-col overflow-hidden h-screen text-ms-text bg-ms-bg">
+    <nav class="z-[60] flex items-center justify-between shrink-0 h-14 px-6 text-white bg-ms-blue shadow-lg">
+      <!-- ========== 導航列 NAV ========== -->
+      <div class="flex items-center h-full">
+        <div class="hidden lg:flex items-center gap-2 mr-6 font-bold text-lg tracking-wide"><i class="fa-solid fa-chart-mixed fa-lg"></i><span class="hidden sm:inline">EC 內部統計小幫手</span></div>
+        <!-- 選單區域 -->
+        <div class="flex h-full whitespace-nowrap">
+          <div class="relative h-full group">
+            <button class="flex items-center h-full px-5 font-medium transition-colors hover:bg-ms-dark">ECN <i class="fa-solid fa-chevron-down ml-2 text-xs"></i></button>
+            <div class="absolute left-0 top-full z-50 hidden overflow-hidden w-56 text-gray-800 bg-white border border-gray-100 rounded-b-md shadow-xl group-hover:block">
+              <a class="flex items-center px-4 py-3 font-medium text-sm border-b border-gray-50 transition-colors cursor-pointer hover:text-ms-blue hover:bg-gray-100" onclick="switchPage(2)">
+                <span class="w-6 mr-3 text-center"><i class="fa-solid fa-chart-pie"></i></span>ECN 統計報告</a>
+              <a class="flex items-center px-4 py-3 font-medium text-sm border-b border-gray-50 transition-colors cursor-pointer hover:text-ms-blue hover:bg-gray-100" onclick="switchPage(20)">
+                <span class="w-6 mr-3 text-center"><i class="fa-solid fa-bars-progress"></i></span>ECR/ECN 追蹤報告</a>
+              <a class="flex items-center px-4 py-3 font-medium text-sm border-b border-gray-50 transition-colors cursor-pointer hover:text-ms-blue hover:bg-gray-100" onclick="switchPage(1)">
+                <span class="w-6 mr-3 text-center"><i class="fa-solid fa-list"></i></span>ECN 詳細清單</a>
+              <a class="flex items-center px-4 py-3 font-medium text-sm border-b border-gray-50 transition-colors cursor-pointer hover:text-ms-blue hover:bg-gray-100" onclick="switchPage(10)">
+                <span class="w-6 mr-3 text-center"><i class="fa-solid fa-share"></i></span>新人類轉單</a>
+            </div>
+          </div>
+          <div class="relative h-full group">
+            <button class="flex items-center h-full px-5 font-medium transition-colors hover:bg-ms-dark">板階 <i class="fa-solid fa-chevron-down ml-2 text-xs"></i></button>
+            <div class="absolute left-0 top-full z-50 hidden overflow-hidden w-56 text-gray-800 bg-white border border-gray-100 rounded-b-md shadow-xl group-hover:block">
+              <a class="flex items-center px-4 py-3 font-medium text-sm border-b border-gray-50 transition-colors cursor-pointer hover:text-ms-blue hover:bg-gray-100" onclick="switchPage(4)">
+                <span class="w-6 mr-3 text-center"><i class="fa-solid fa-chart-column"></i></span>板階統計報告</a>
+              <a class="flex items-center px-4 py-3 font-medium text-sm border-b border-gray-50 transition-colors cursor-pointer hover:text-ms-blue hover:bg-gray-100" onclick="switchPage(5)">
+                  <span class="w-6 mr-3 text-center"><i class="fa-solid fa-file-circle-plus"></i></span>新建板階</a>
+              <a class="flex items-center px-4 py-3 font-medium text-sm border-b border-gray-50 transition-colors cursor-pointer hover:text-ms-blue hover:bg-gray-100" onclick="switchPage(6)">
+                  <span class="w-6 mr-3 text-center"><i class="fa-solid fa-file-pen"></i></span>板階維護</a>
+            </div>
+          </div>
+          <div class="relative h-full group">
+            <button class="flex items-center h-full px-5 font-medium transition-colors hover:bg-ms-dark">PCB <i class="fa-solid fa-chevron-down ml-2 text-xs"></i></button>
+            <div class="absolute left-0 top-full z-50 hidden overflow-hidden w-56 text-gray-800 bg-white border border-gray-100 rounded-b-md shadow-xl group-hover:block">
+              <a class="flex items-center px-4 py-3 font-medium text-sm border-b border-gray-50 transition-colors cursor-pointer hover:text-ms-blue hover:bg-gray-100" onclick="switchPage(7)">
+                <span class="w-6 mr-3 text-center"><i class="fa-solid fa-chart-column"></i></span>PCB 統計報告</a>
+              <a class="flex items-center px-4 py-3 font-medium text-sm border-b border-gray-50 transition-colors cursor-pointer hover:text-ms-blue hover:bg-gray-100" onclick="switchPage(3)">
+                <span class="w-6 mr-3 text-center"><i class="fa-solid fa-database"></i></span>PCB 詳細清單</a>
+              <a class="flex items-center px-4 py-3 font-medium text-sm border-b border-gray-50 transition-colors cursor-pointer hover:text-ms-blue hover:bg-gray-100" onclick="switchPage(9)">
+                  <span class="w-6 mr-3 text-center"><i class="fa-solid fa-file-pen"></i></span>PCB 維護</a>
+              <a class="flex items-center px-4 py-3 font-medium text-sm border-b border-gray-50 transition-colors cursor-pointer hover:text-ms-blue hover:bg-gray-100" onclick="switchPage(8)">
+                  <span class="w-6 mr-3 text-center"><i class="fa-solid fa-check-double"></i></span>GPMS 啟動</a>
+            </div>
+          </div>
+          <div class="relative h-full group">
+            <button class="flex items-center h-full px-5 font-medium transition-colors hover:bg-ms-dark">其他<i class="fa-solid fa-chevron-down ml-2 text-xs"></i></button>
+            <div class="absolute left-0 top-full z-50 hidden overflow-hidden w-56 text-gray-800 bg-white border border-gray-100 rounded-b-md shadow-xl group-hover:block">
+              <a class="flex items-center px-4 py-3 font-medium text-sm border-b border-gray-50 transition-colors cursor-pointer hover:text-ms-blue hover:bg-gray-100" onclick="switchPage(18)">
+                <span class="w-6 mr-3 text-center"><i class="fa-solid fa-chart-column"></i></span>其他統計報告</a>
+              <a class="flex items-center px-4 py-3 font-medium text-sm border-b border-gray-50 transition-colors cursor-pointer hover:text-ms-blue hover:bg-gray-100" onclick="switchPage(11)">
+                <span class="w-6 mr-3 text-center"><i class="fa-solid fa-computer"></i></span>資料匯出</a>
+              <a class="flex items-center px-4 py-3 font-medium text-sm border-b border-gray-50 transition-colors cursor-pointer hover:text-ms-blue hover:bg-gray-100" onclick="switchPage(12)">
+                <span class="w-6 mr-3 text-center"><i class="fa-solid fa-users"></i></span>協助項目</a>
+              <a class="flex items-center px-4 py-3 font-medium text-sm border-b border-gray-50 transition-colors cursor-pointer hover:text-ms-blue hover:bg-gray-100" onclick="switchPage(14)">
+                <span class="w-6 mr-3 text-center"><i class="fa-solid fa-ban"></i></span>停用取替代</a>
+              <a class="flex items-center px-4 py-3 font-medium text-sm border-b border-gray-50 transition-colors cursor-pointer hover:text-ms-blue hover:bg-gray-100" onclick="switchPage(17)">
+                <span class="w-6 mr-3 text-center"><i class="fa-solid fa-cubes"></i></span>BOM 建立</a>
+              <a class="flex items-center px-4 py-3 font-medium text-sm border-b border-gray-50 transition-colors cursor-pointer hover:text-ms-blue hover:bg-gray-100" onclick="switchPage(19)">
+                <span class="w-6 mr-3 text-center"><i class="fa-solid fa-file-lock"></i></span>管制文件申請</a>
+            </div>
+          </div>
+          <!-- 設定選單 (登入後顯示) -->
+          <div class="relative h-full group auth-only">
+            <button class="flex items-center h-full px-5 font-medium transition-colors hover:bg-ms-dark">設定<i class="fa-solid fa-chevron-down ml-2 text-xs"></i></button>
+            <div class="absolute left-0 top-full z-50 hidden overflow-hidden w-56 text-gray-800 bg-white border border-gray-100 rounded-b-md shadow-xl group-hover:block">
+              <a class="flex items-center px-4 py-3 font-medium text-sm border-b border-gray-50 transition-colors cursor-pointer hover:text-ms-blue hover:bg-gray-100" onclick="switchPage(15)">
+                <span class="w-6 mr-3 text-center"><i class="fa-solid fa-users-gear"></i></span>人員設定</a>
+              <a class="flex items-center px-4 py-3 font-medium text-sm border-b border-gray-50 transition-colors cursor-pointer hover:text-ms-blue hover:bg-gray-100" onclick="switchPage(16)">
+                <span class="w-6 mr-3 text-center"><i class="fa-solid fa-square-caret-down"></i></span>選項設定</a>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- 登入按鈕區域 -->
+      <div class="flex items-center gap-3">
+        <div class="sync-status success" id="syncStatus"><span id="syncIcon">✅</span>
+          <span id="syncText">已同步</span></div>
+        <button class="px-3 py-2 text-sm bg-white/10 border border-white/20 rounded transition-colors auth-only hover:bg-white/20" onclick="exportAllToExcel()" title="匯出全部資料"><i class="fa-solid fa-file-export"></i></button>
+        <button class="px-3 py-2 text-sm bg-white/10 border border-white/20 rounded transition-colors hover:bg-white/20" onclick="manualRefresh()" title="重新整理資料"><i class="fa-solid fa-arrows-rotate"></i></button>
+        <button class="flex items-center gap-2 px-4 py-2 font-medium text-sm bg-white/10 border border-white/20 rounded transition-colors hover:bg-white/20" id="navLoginBtn" onclick="toggleLogin()"><i class="fa-solid fa-user-lock"></i><span id="navLoginText">登入</span></button>
+      </div>
+    </nav>
+    <div class="relative flex-1 overflow-y-auto p-6 bg-ms-bg scroll-smooth">
+      <!-- ========== PAGE1 ECN 詳細清單 ========== -->
+      <div class="flex flex-col h-full page" id="page1">
+        <div class="flex flex-col overflow-hidden h-full bg-white border border-gray-200 rounded-lg shadow-md">
+          <div class="flex items-center justify-between shrink-0 p-5 bg-white border-b border-gray-100">
+            <h3 class="flex items-center gap-3 font-bold text-xl text-gray-800"><i class="fa-solid fa-list text-ms-blue"></i>ECN 詳細清單<span id="fileTime_p1"></span></h3>
+            <div class="flex items-center gap-2">
+              <select class="px-3 py-2 font-medium text-sm text-gray-600 border border-gray-300 rounded-md outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="ecnYearSelect" onchange="renderTable()"></select>
+              <div class="relative">
+                <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400 pointer-events-none"><i class="fa-solid fa-magnifying-glass"></i></span>
+                <input class="w-64 py-2 pr-4 pl-9 text-sm border border-gray-300 rounded-lg outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="searchBox_p1" oninput="debouncedSearchP1();" placeholder="輸入搜尋關鍵字" type="text" autocomplete="off" />
+              </div>
+              <button class="search-help-btn" onclick="showSearchHelp('p1')" title="搜尋語法說明"><i class="fa-solid fa-circle-question"></i></button>
+              <button class="flex items-center gap-1 px-3 py-2 text-sm auth-only btn-primary" onclick="saveCurrentPageData(1)"><i class="fa-solid fa-floppy-disk"></i><span>儲存</span></button>
+              <button class="flex items-center gap-1 px-3 py-2 text-sm btn-success" onclick="exportDetailList()"><i class="fa-solid fa-file-excel"></i><span>匯出</span></button>
+              <label class="flex items-center gap-1 px-3 py-2 text-sm cursor-pointer btn-primary auth-only"><i class="fa-solid fa-file-import"></i><span>匯入</span><input type="file" accept=".json" class="hidden" onchange="handleEcnJsonImport(this)"></label>
+              <button class="search-help-btn auth-only" onclick="document.getElementById('ecnImportGuideModal').classList.add('show')" title="匯入說明"><i class="fa-solid fa-circle-question"></i></button>
+            </div>
+          </div>
+          <div class="flex-1 overflow-auto">
+            <table class="w-full text-left whitespace-nowrap border-spacing-0 border-separate table-fixed" id="mainTable">
+              <colgroup>
+                <col style="width: 120px"><!-- ECN單號 -->
+                <col style="width: 120px"><!-- ECR單號 -->
+                <col style="width: 70px"><!-- 狀態 -->
+                <col style="width: 130px"><!-- 申請人 -->
+                <col style="width: 320px"><!-- 品號 -->
+                <col style="width: 130px"><!-- 協辦人 -->
+                <col style="width: 65px"><!-- 等級 -->
+                <col style="width: 185px"><!-- 變更原因 -->
+                <col style="width: 225px"><!-- 變更範圍 -->
+                <col style="width: 90px"><!-- 申請日期 -->
+                <col style="width: 90px"><!-- 一簽 -->
+                <col style="width: 90px"><!-- 二簽 -->
+                <col style="width: 55px"><!-- 全流程 -->
+                <col style="width: 90px"><!-- 協辦收件日 -->
+                <col style="width: 70px"><!-- 複雜度 -->
+                <col style="width: 90px"><!-- PLM發起 -->
+                <col style="width: 90px"><!-- PLM發佈 -->
+                <col style="width: 65px"><!-- PLM作業 -->
+                <col style="width: 65px"><!-- PLM簽核 -->
+                <col style="width: 65px"><!-- ERP確認 -->
+                <col style="width: 35px"><!-- EC內部天數 -->
+                <col style="width: 35px"><!-- 逾期 -->
+                <col style="width: 350px"><!-- 逾期說明 -->
+              </colgroup>
+              <thead class="sticky top-0 z-40 font-semibold text-xs tracking-tight text-gray-600 bg-gray-50 border-b-2 border-gray-200 shadow-sm [&_th]:h-10 [&_th]:align-middle">
+                <tr>
+                  <th class="p-2 text-center bg-gray-50 border-b border-gray-200 transition-colors cursor-pointer sticky-col-cell sticky-corner hover:bg-gray-100" onclick="handleSort('id')">
+                    ECN 單號<span class="ml-1 text-[10px]" id="sort_id"><i class="fa-solid fa-arrows-up-down text-gray-300"></i></span>
+                  </th>
+                  <th class="p-2 text-center border-b border-gray-200 cursor-pointer" onclick="handleSort('ecrId')">
+                    ECR 單號<span class="ml-1 text-[10px]" id="sort_ecrId"><i class="fa-solid fa-arrows-up-down text-gray-300"></i></span>
+                  </th>
+                  <th class="p-2 text-center border-b border-gray-200">表單狀態</th>
+                  <th class="p-2 border-b border-gray-200">申請人</th>
+                  <th class="p-2 border-b border-gray-200">變更品號</th>
+                  <th class="p-2 border-b border-gray-200">協辦人</th>
+                  <th class="p-2 text-center border-b border-gray-200">需求等級</th>
+                  <th class="p-2 border-b border-gray-200">變更原因分類</th>
+                  <th class="p-2 border-b border-gray-200">變更範圍</th>
+                  <th class="p-2 text-center border-b border-gray-200 cursor-pointer" onclick="handleSort('applyTime')">
+                    申請日期<span class="ml-1 text-[10px]" id="sort_applyTime"><i class="fa-solid fa-arrows-up-down text-gray-300"></i></span>
+                  </th>
+                  <th class="p-2 text-center border-b border-gray-200 cursor-pointer" onclick="handleSort('approveTime1')">
+                    【一】申請<span class="ml-1 text-[10px]" id="sort_approveTime1"><i class="fa-solid fa-arrows-up-down text-gray-300"></i></span>
+                  </th>
+                  <th class="p-2 text-center border-b border-gray-200 cursor-pointer" onclick="handleSort('approveTime')">
+                    【二】協辦<span class="ml-1 text-[10px]" id="sort_approveTime"><i class="fa-solid fa-arrows-up-down text-gray-300"></i></span>
+                  </th>
+                  <th class="p-2 text-center text-emerald-700 bg-green-50 border-b border-gray-200" title="申請日 → 【二】協辦">全流程</th>
+                  <th class="p-2 text-center border-b border-gray-200">【二】收件日</th>
+                  <th class="p-2 text-center border-b border-gray-200">複雜度</th>
+                  <th class="p-2 text-center text-ms-blue border-b border-gray-200">PLM 發起</th>
+                  <th class="p-2 text-center text-ms-blue border-b border-gray-200">PLM 發佈</th>
+                  <th class="p-2 text-center text-ms-blue bg-blue-50 border-b border-gray-200" title="【二】收件 → PLM發起">PLM 作業</th>
+                  <th class="p-2 text-center text-ms-blue bg-blue-50 border-b border-gray-200" title="PLM發起 → PLM發佈">PLM 簽核</th>
+                  <th class="p-2 text-center text-ms-blue bg-blue-50 border-b border-gray-200" title="PLM發佈 → 【二】協辦">ERP 確認</th>
+                  <th class="p-2 text-center text-amber-700 bg-yellow-50 border-b border-gray-200" title="【二】收件 → 【二】協辦">
+                    <i class="fa-solid fa-calendar-clock text-sm"></i>
+                  </th>
+                  <th class="p-2 text-center text-red-600 bg-red-50 border-b border-gray-200" title="【二】收件 → 【二】協辦">
+                    <i class="fa-solid fa-calendar-xmark text-sm"></i>
+                  </th>
+                  <th class="p-2 text-red-600 bg-red-50 border-b border-gray-200">逾期說明</th>
+                </tr>
+              </thead>
+              <tbody class="text-xs divide-y divide-gray-100"></tbody>
+            </table>
+          </div>
+          <div class="py-3 border-t border-gray-200 bg-gray-50 flex justify-center items-center gap-4 text-xs shrink-0 z-30 min-h-[45px]" id="pagination_p1"></div>
+        </div>
+      </div>
+      <!-- ========== PAGE2 ECN 統計報告 ========== -->
+      <div class="flex flex-col overflow-hidden h-full bg-white border border-gray-200 rounded-lg shadow-md page" id="page2">
+        <div class="flex items-center justify-between shrink-0 px-6 py-4 bg-white border-b border-gray-200">
+          <h3 class="flex items-center gap-4 font-bold text-xl text-gray-800" id="viewTitle"><span class="w-2 h-6 bg-ms-blue rounded-full"></span> ECN 統計報告</h3>
+          <div class="flex items-center gap-3">
+            <select class="px-3 py-2 font-medium text-sm text-gray-600 border border-gray-300 rounded-md outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="monthSelect" onchange="renderCharts()"></select>
+          </div>
+        </div>
+        <div class="flex-1 overflow-y-auto p-6 bg-gray-50/50">
+          <div class="max-w-[1600px] mx-auto" id="monthlyView">
+            <div class="grid gap-4 grid-cols-1 mb-6 lg:grid-cols-4 md:grid-cols-2" id="summaryGrid"></div>
+            <!-- 圓餅圖 -->
+            <div class="grid gap-4 grid-cols-1 mb-6 lg:grid-cols-2">
+              <div class="p-6 bg-white border border-gray-200 rounded-lg shadow-md">
+                <h4 class="flex items-center gap-3 mb-4 font-bold text-gray-600"><span class="w-1 h-5 bg-ms-blue rounded-full"></span>狀態分佈</h4>
+                <div class="h-80"><canvas id="chartStatus"></canvas></div>
+              </div>
+              <div class="p-6 bg-white border border-gray-200 rounded-lg shadow-md">
+                <h4 class="flex items-center gap-3 mb-4 font-bold text-gray-600"><span class="w-1 h-5 bg-ms-blue rounded-full"></span>結案天數分佈</h4>
+                <div class="h-80"><canvas id="chartDuration"></canvas></div>
+              </div>
+            </div>
+            <!-- 月度績效統計表 -->
+            <div class="overflow-hidden bg-white border border-gray-200 rounded-xl shadow-sm">
+              <div class="flex items-center justify-between p-3 bg-gray-50 border-b border-gray-100">
+                <h4 class="font-bold text-sm text-gray-700"><i class="fa-solid fa-calendar-days text-ms-blue mr-2"></i>月度統計</h4>
+                <select class="px-3 py-2 font-medium text-sm text-gray-600 border border-gray-300 rounded-md outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="ecnYearlyTableSelect" onchange="renderYearlyTable()"></select>
+              </div>
+              <div>
+                <table class="w-full text-xs text-center" id="yearlyTable">
+                  <thead class="sticky top-0 font-semibold text-gray-500 bg-white shadow-sm">
+                    <tr>
+                      <th class="p-2 pl-6 text-left border-b">月份</th>
+                      <th class="p-2 border-b">總筆數</th>
+                      <th class="p-2 text-emerald-600 bg-emerald-50 border-b">已結案</th>
+                      <th class="p-2 text-blue-600 bg-blue-50 border-b">未結案</th>
+                      <th class="p-2 text-red-600 bg-red-50 border-b">作廢</th>
+                      <th class="p-2 text-green-600 bg-green-50 border-b">0-20天</th>
+                      <th class="p-2 text-amber-600 bg-amber-50 border-b">21-30天</th>
+                      <th class="p-2 text-orange-600 bg-orange-50 border-b">30天+</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- ========== PAGE20 ECR/ECN 追蹤報告 ========== -->
+      <div class="flex flex-col overflow-hidden h-full bg-white border border-gray-200 rounded-lg shadow-md page" id="page20">
+        <div class="flex items-center justify-between shrink-0 px-6 py-4 bg-white border-b border-gray-200">
+          <h3 class="flex items-center gap-4 font-bold text-xl text-gray-800">
+            <span class="w-2 h-6 bg-ms-blue rounded-full"></span>ECR/ECN 追蹤報告
+            <span id="fileTime_p20"></span>
+          </h3>
+          <div class="flex items-center gap-2">
+            <select class="px-3 py-2 font-medium text-sm text-gray-600 border border-gray-300 rounded-md outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="ecrEcnYearSelect" onchange="_ecrSelectedMonth=null;_ecnSelectedMonth=null;paginationState.p20=1;renderEcrEcnPage()"></select>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400 pointer-events-none"><i class="fa-solid fa-magnifying-glass"></i></span>
+              <input class="w-64 py-2 pr-4 pl-9 text-sm border border-gray-300 rounded-lg outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="searchBox_p20" oninput="debouncedSearchP20()" placeholder="輸入搜尋關鍵字" type="text" autocomplete="off">
+            </div>
+            <button class="search-help-btn" onclick="showSearchHelp('p20')" title="搜尋語法說明"><i class="fa-solid fa-circle-question"></i></button>
+            <button class="flex items-center gap-1 px-3 py-2 text-sm auth-only btn-primary" onclick="saveCurrentPageData(20)"><i class="fa-solid fa-floppy-disk"></i><span>儲存</span></button>
+            <button class="flex items-center gap-1 px-3 py-2 text-sm btn-success" onclick="exportEcrEcnExcel()"><i class="fa-solid fa-file-excel"></i><span>匯出</span></button>
+            <label class="flex items-center gap-1 px-3 py-2 text-sm cursor-pointer btn-primary auth-only">
+              <i class="fa-solid fa-file-import"></i><span>匯入</span>
+              <input type="file" accept=".json" class="hidden" id="ecrEcnJsonImport" onchange="handleEcrEcnImport(this)">
+            </label>
+            <button class="search-help-btn auth-only" onclick="document.getElementById('ecrEcnConsoleGuideModal').classList.add('show')" title="匯入說明"><i class="fa-solid fa-circle-question"></i></button>
+            <button class="search-help-btn" onclick="document.getElementById('ecrEcnCalcHelpModal').classList.add('show')" title="計算說明"><i class="fa-solid fa-book"></i></button>
+          </div>
+        </div>
+        <div class="flex-1 overflow-y-auto p-6 bg-gray-50/50">
+          <div class="max-w-[1800px] mx-auto">
+            <div class="mb-4">
+              <div class="flex items-center gap-2 mb-3 font-bold text-sm text-gray-600"><span class="w-1.5 h-5 bg-orange-400 rounded-full"></span> ECR
+                <button class="ml-2 px-2 py-0.5 text-[10px] font-bold text-orange-600 bg-orange-50 border border-orange-200 rounded-full hover:bg-orange-100 transition-colors" onclick="showEcrEcnStepModal('ECR')"><i class="fa-solid fa-chart-diagram mr-1"></i>關卡統計</button></div>
+              <div class="grid gap-4 grid-cols-1 mb-4 lg:grid-cols-5 md:grid-cols-3" id="ecrStatCards"></div>
+            </div>
+            <div class="mb-6">
+              <div class="flex items-center gap-2 mb-3 font-bold text-sm text-gray-600"><span class="w-1.5 h-5 bg-ms-blue rounded-full"></span> ECN
+                <button class="ml-2 px-2 py-0.5 text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 rounded-full hover:bg-blue-100 transition-colors" onclick="showEcrEcnStepModal('ECN')"><i class="fa-solid fa-chart-diagram mr-1"></i>關卡統計</button></div>
+              <div class="grid gap-4 grid-cols-1 mb-4 lg:grid-cols-5 md:grid-cols-3" id="ecnStatCards"></div>
+            </div>
+            <div class="overflow-hidden bg-white border border-gray-200 rounded-xl shadow-sm">
+              <div class="flex items-center justify-between p-3 bg-gray-50 border-b border-gray-100"><h4 class="font-bold text-sm text-gray-700"><i class="fa-solid fa-table-list text-ms-blue mr-2"></i>ECR <i class="fa-solid fa-arrows-left-right"></i> ECN 追蹤明細</h4><span class="text-xs text-gray-400" id="ecrEcnCount"></span></div>
+              <div class="overflow-auto" style="max-height: calc(100vh - 400px);">
+                <div style="min-width: 1660px;">
+                <table class="w-full text-xs text-left border-spacing-0 border-separate whitespace-nowrap">
+                  <colgroup>
+                    <col style="width:110px"><!-- R單號 -->
+                    <col style="width:60px"><!-- R狀態 -->
+                    <col style="width:90px"><!-- R申請日 -->
+                    <col style="width:60px"><!-- R申請部門 -->
+                    <col style="width:100px"><!-- R申請人 -->
+                    <col style="width:250px"><!-- R簽核 -->
+                    <col style="width:90px"><!-- R結案日 -->
+                    <col style="width:35px"><!-- R天數 -->
+                    <col style="width:110px"><!-- N單號 -->
+                    <col style="width:60px"><!-- N狀態 -->
+                    <col style="width:90px"><!-- N申請日 -->
+                    <col style="width:60px"><!-- N申請部門 -->
+                    <col style="width:100px"><!-- N申請人 -->
+                    <col style="width:250px"><!-- N簽核 -->
+                    <col style="width:90px"><!-- N二關 -->
+                    <col style="width:35px"><!-- N天數 -->
+                  </colgroup>
+                  <thead class="sticky top-0 z-10 font-semibold text-gray-500 bg-white shadow-sm"><tr>
+                    <th class="p-2 text-center bg-orange-50 text-orange-700 border-b">ECR 單號</th>
+                    <th class="p-2 text-center bg-orange-50 text-orange-700 border-b">狀態</th>
+                    <th class="p-2 text-center bg-orange-50 text-orange-700 border-b">申請日</th>
+                    <th class="p-2 text-center bg-orange-50 text-orange-700 border-b">申請部門</th>
+                    <th class="p-2 text-center bg-orange-50 text-orange-700 border-b">申請人</th>
+                    <th class="p-2 bg-orange-50 text-orange-700 border-b">簽核資訊</th>
+                    <th class="p-2 text-center bg-orange-50 text-orange-700 border-b">結案日</th>
+                    <th class="p-2 text-center bg-orange-100 text-orange-700 border-b" style="border-right:1px solid #d1d5db;"><i class="fa-solid fa-calendar-clock text-sm"></i></th>
+                    <th class="p-2 text-center bg-blue-50 text-blue-700 border-b">ECN 單號</th>
+                    <th class="p-2 text-center bg-blue-50 text-blue-700 border-b">狀態</th>
+                    <th class="p-2 text-center bg-blue-50 text-blue-700 border-b">申請日</th>
+                    <th class="p-2 text-center bg-blue-50 text-blue-700 border-b">申請部門</th>
+                    <th class="p-2 text-center bg-blue-50 text-blue-700 border-b">申請人</th>
+                    <th class="p-2 bg-blue-50 text-blue-700 border-b">簽核資訊</th>
+                    <th class="p-2 text-center bg-blue-50 text-blue-700 border-b">【二】協辦</th>
+                    <th class="p-2 text-center bg-blue-100 text-blue-700 border-b"><i class="fa-solid fa-calendar-clock text-sm"></i></th>
+                  </tr></thead>
+                  <tbody class="text-xs divide-y divide-gray-100" id="ecrEcnTbody"></tbody>
+                </table>
+                </div>
+              </div>
+              <div class="py-3 border-t border-gray-200 bg-gray-50 flex justify-center items-center gap-4 text-xs shrink-0 z-30 min-h-[45px]" id="pagination_p20"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="fixed inset-0 z-[200] hidden items-center justify-center bg-black/50" id="ecrEcnStepModal" onclick="if(event.target===this){this.classList.remove('flex');this.classList.add('hidden');}">
+        <div class="bg-white rounded-xl shadow-2xl w-[600px] max-h-[80vh] overflow-auto">
+          <div class="flex items-center justify-between p-4 border-b border-gray-200"><h3 class="font-bold text-lg text-gray-800" id="ecrEcnStepModalTitle"></h3>
+            <div class="flex items-center gap-2">
+              <button class="px-3 py-1 text-xs font-bold text-ms-blue bg-blue-50 border border-blue-200 rounded-full hover:bg-blue-100 transition-colors" id="copyStepStatsBtn" onclick="copyStepStats()"><i class="fa-solid fa-copy mr-1"></i>複製</button>
+              <button class="text-gray-400 hover:text-gray-600 text-xl" onclick="document.getElementById('ecrEcnStepModal').classList.remove('flex');document.getElementById('ecrEcnStepModal').classList.add('hidden');"><i class="fa-solid fa-xmark"></i></button></div>
+          </div><div class="p-4" id="ecrEcnStepModalBody"></div>
+        </div>
+      </div>
+      <!-- ========== PAGE10 轉單清單 ========== -->
+      <div class="flex flex-col overflow-hidden h-full bg-white border border-gray-200 rounded-lg shadow-md page" id="page10">
+        <div class="flex items-center justify-between shrink-0 px-6 py-4 bg-white border-b border-gray-200">
+          <h3 class="flex items-center gap-3 font-bold text-xl text-gray-800">
+            <span class="w-2 h-6 bg-ms-blue rounded-full"></span>新人類轉單統計
+            <div class="flex gap-2 rounded-md" role="group">
+              <button class="px-4 py-2 text-sm rounded-l-md shadow-inner btn-primary" id="btnTransECN" onclick="switchTransferType('ECN')">ECN</button>
+              <button class="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-r-md transition-colors hover:bg-gray-50" id="btnTransECR" onclick="switchTransferType('ECR')">ECR</button>
+            </div>
+            <span id="fileTime_p10"></span>
+          </h3>
+          <div class="flex items-center gap-2">
+            <select class="px-3 py-2 font-medium text-sm text-gray-600 border border-gray-300 rounded-md outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="transferYearSelect" onchange="renderTransferPage()"></select>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400 pointer-events-none"><i class="fa-solid fa-magnifying-glass"></i></span>
+              <input class="w-64 py-2 pr-4 pl-9 text-sm border border-gray-300 rounded-lg outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="searchBox_p10" oninput="debouncedSearchP10();" placeholder="輸入搜尋關鍵字" type="text" autocomplete="off" />
+            </div>
+            <button class="search-help-btn" onclick="showSearchHelp('p10')" title="搜尋語法說明"><i class="fa-solid fa-circle-question"></i></button>
+            <button class="flex items-center gap-1 px-3 py-2 text-sm btn-success" onclick="exportTransferExcel()"><i class="fa-solid fa-file-excel"></i><span>匯出</span></button>
+          </div>
+        </div>
+        <div class="flex flex-1 overflow-hidden bg-gray-50">
+          <div class="flex flex-col shrink-0 w-64 bg-white border-r border-gray-200">
+            <div class="p-3 bg-gray-50 border-b border-gray-100">
+              <h4 class="font-bold text-sm text-gray-700"><i class="fa-solid fa-calendar-days text-ms-blue mr-2"></i>月度統計</h4>
+            </div>
+            <div class="flex-1 overflow-y-auto">
+              <table class="w-full text-xs text-center">
+                <thead class="sticky top-0 z-10 font-semibold text-gray-500 bg-white shadow-sm">
+                  <tr>
+                    <th class="p-2 pl-6 text-left border-b">月份</th>
+                    <th class="p-2 border-b">筆數</th>
+                  </tr>
+                </thead>
+                <tbody class="text-gray-700 divide-y divide-gray-50" id="transferSidebarBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="flex flex-col flex-1 overflow-hidden">
+            <div class="flex flex-col flex-1 overflow-hidden p-4" id="transferScrollContainer">
+              <div class="relative flex-1 overflow-auto w-full bg-white border border-gray-200 rounded-lg">
+                <table class="w-full text-left whitespace-nowrap border-spacing-0 border-separate table-fixed">
+                  <colgroup>
+                    <col style="width: 130px" /><!-- 單號 -->
+                    <col style="width: 140px" /><!-- 申請部門 -->
+                    <col style="width: 140px" /><!-- 申請人 -->
+                    <col style="width: 180px" /><!-- 簽核步驟 -->
+                    <col style="width: 90px" /><!-- 送達日 -->
+                    <col style="width: 250px" /><!-- 簽核結果 -->
+                    <col style="width: 90px" /><!-- 簽核日 -->
+                    <col style="width: 35px" /><!-- 天數 -->
+                    <col style="width: 130px" /><!-- 執行人 -->
+                    <col style="width: 450px" /><!-- 意見 -->
+                  </colgroup>
+                  <thead class="sticky top-0 z-40 font-semibold text-xs tracking-tight text-gray-600 bg-gray-50 shadow-sm">
+                    <tr>
+                      <th class="z-50 p-2 text-center bg-gray-50 border-b sticky-col-cell sticky-corner">表單編號</th>
+                      <th class="p-2 bg-gray-50 border-b">申請部門</th>
+                      <th class="p-2 bg-gray-50 border-b">申請人</th>
+                      <th class="p-2 bg-gray-50 border-b">簽核步驟</th>
+                      <th class="p-2 text-center bg-gray-50 border-b">送達日期</th>
+                      <th class="p-2 bg-gray-50 border-b">簽核結果</th>
+                      <th class="p-2 text-center bg-gray-50 border-b">簽核日期</th>
+                      <th class="p-2 text-center text-ms-blue bg-blue-50 border-b">
+                        <i class="fa-solid fa-calendar-clock text-sm"></i>
+                      </th>
+                      <th class="p-2 bg-gray-50 border-b">執行人</th>
+                      <th class="p-2 bg-gray-50 border-b">簽核意見</th>
+                    </tr>
+                  </thead>
+                  <tbody class="text-xs divide-y divide-gray-100" id="transferBody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="py-3 border-t border-gray-200 bg-gray-50 flex justify-center items-center gap-4 text-xs shrink-0 z-30 min-h-[45px]" id="pagination_p10"></div>
+          </div>
+        </div>
+      </div>
+      <!-- ========== PAGE4 板階統計報告 ========== -->
+      <div class="flex flex-col overflow-hidden h-full bg-white border border-gray-200 rounded-lg shadow-md page" id="page4">
+        <div class="flex items-center justify-between shrink-0 px-6 py-4 bg-white border-b border-gray-200">
+          <h3 class="flex items-center gap-3 font-bold text-xl text-gray-800"><span class="w-2 h-6 bg-ms-blue rounded-full"></span>板階統計報告</h3>
+          <div class="flex gap-3">
+            <select class="px-3 py-2 font-medium text-sm text-gray-600 border border-gray-300 rounded-md outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="boardYearSelect" onchange="renderBoardCharts()"></select>
+          </div>
+        </div>
+        <div class="flex-1 overflow-y-auto p-6 bg-gray-50/50">
+          <div class="max-w-[1600px] mx-auto">
+            <div class="grid gap-4 grid-cols-2 mb-8 md:grid-cols-4" id="boardKpiCards"></div>
+            <div class="flex flex-col gap-6">
+              <!-- 月度統計表格 -->
+              <div class="overflow-hidden bg-white border border-gray-200 rounded-xl shadow-sm">
+                <div class="flex items-center justify-between p-3 bg-gray-50 border-b border-gray-100">
+                  <h4 class="font-bold text-sm text-gray-700"><i class="fa-solid fa-calendar-days text-ms-blue mr-2"></i>月度統計</h4>
+                </div>
+                <div>
+                  <table class="w-full text-xs text-center">
+                    <thead class="sticky top-0 font-semibold text-gray-500 bg-white shadow-sm">
+                      <tr>
+                        <th class="p-2 pl-6 text-left border-b">月份</th>
+                        <th class="p-2 text-blue-600 bg-blue-50 border-b">收件</th>
+                        <th class="p-2 text-green-600 bg-green-50 border-b">新建</th>
+                        <th class="p-2 text-amber-600 bg-amber-50 border-b">平均天數</th>
+                        <th class="p-2 text-purple-600 bg-purple-50 border-b">維護</th>
+                        <th class="p-2 text-gray-600 bg-gray-50 border-b">合計</th>
+                      </tr>
+                    </thead>
+                    <tbody class="text-gray-700 divide-y divide-gray-50" id="boardMonthlyTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+              <!-- 建立人 & 需求等級統計 -->
+              <div class="grid gap-4 grid-cols-1 md:grid-cols-2" id="boardStatsGrid"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- ========== PAGE5 新建板階清單 ========== -->
+      <div class="flex flex-col overflow-hidden h-full bg-white border border-gray-200 rounded-lg shadow-md page" id="page5">
+        <div class="flex items-center justify-between shrink-0 px-6 py-4 bg-white border-b border-gray-200">
+          <h3 class="flex items-center gap-3 font-bold text-xl text-gray-800"><i class="fa-solid fa-list text-ms-blue"></i>新建板階清單<span id="fileTime_p5"></span></h3>
+          <div class="flex items-center gap-2">
+            <select class="px-3 py-2 font-medium text-sm text-gray-600 border border-gray-300 rounded-md outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="yearSelect_p5" onchange="renderNewBoardPage()"></select>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400 pointer-events-none"><i class="fa-solid fa-magnifying-glass"></i></span>
+              <input class="w-64 py-2 pr-4 pl-9 text-sm border border-gray-300 rounded-lg outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="searchBox_p5" oninput="debouncedSearchP5();" placeholder="輸入搜尋關鍵字" type="text" autocomplete="off" />
+            </div>
+            <button class="search-help-btn" onclick="showSearchHelp('p5')" title="搜尋語法說明"><i class="fa-solid fa-circle-question"></i></button>
+            <button class="flex items-center gap-1 px-3 py-2 text-sm auth-only btn-primary" onclick="saveCurrentPageData(5)"><i class="fa-solid fa-floppy-disk"></i><span>儲存</span></button>
+            <button class="flex items-center gap-1 px-3 py-2 text-sm btn-success" onclick="exportNewBoardExcel()"><i class="fa-solid fa-file-excel"></i><span>匯出</span></button>
+          </div>
+        </div>
+        <div class="flex flex-1 overflow-hidden bg-gray-50">
+          <div class="flex flex-col shrink-0 w-64 bg-white border-r border-gray-200">
+            <div class="p-3 bg-gray-50 border-b border-gray-100">
+              <h4 class="font-bold text-sm text-gray-700"><i class="fa-solid fa-calendar-days text-ms-blue mr-2"></i>月度統計</h4>
+            </div>
+            <div class="flex-1 overflow-y-auto">
+              <table class="w-full text-xs text-center">
+                <thead class="sticky top-0 z-10 font-semibold text-gray-500 bg-white shadow-sm">
+                  <tr>
+                    <th class="p-2 pl-6 text-left border-b">月份</th>
+                    <th class="p-2 border-b">筆數</th>
+                  </tr>
+                </thead>
+                <tbody class="text-gray-700 divide-y divide-gray-50" id="newBoardSidebarBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="flex flex-col flex-1 overflow-hidden">
+            <div class="flex flex-col flex-1 overflow-hidden p-4" id="newBoardScrollContainer">
+              <div class="relative flex-1 overflow-auto w-full bg-white border border-gray-200 rounded-lg">
+                <table class="w-full min-w-[1400px] text-left whitespace-nowrap border-spacing-0 border-separate table-fixed">
+                  <colgroup>
+                    <col class="auth-visible" style="width: 25px" /><!-- 刪除 -->
+                    <col style="width: 90px" /><!-- 申請日 -->
+                    <col style="width: 90px" /><!-- 更新日期 -->
+                    <col style="width: 90px" /><!-- 建立日 -->
+                    <col style="width: 300px" /><!-- 料號 -->
+                    <col style="width: 45px" /><!-- 階段 -->
+                    <col style="width: 130px" /><!-- 專案代碼 -->
+                    <col style="width: 100px" /><!-- 申請人 -->
+                    <col style="width: 80px" /><!-- BOM? -->
+                    <col style="width: 90px" /><!-- BOM發佈日 -->
+                    <col style="width: 130px" /><!-- 建立人 -->
+                    <col style="width: 80px" /><!-- 等級 -->
+                    <col style="width: 35px" /><!-- 天數 -->
+                    <col style="width: 35px" /><!-- 逾期 -->
+                    <col style="width: 250px" /><!-- 說明 -->
+                  </colgroup>
+                  <thead class="sticky top-0 z-10 font-semibold text-xs tracking-tight text-gray-600 bg-gray-50 shadow-sm">
+                    <tr>
+                      <th class="w-10 p-2 auth-only border-b"></th>
+                      <th class="p-2 text-center transition-colors cursor-pointer hover:bg-gray-100 border-b" onclick="handleBoardSort('p5', 'applyDate')">
+                        申請日期<span class="ml-1 text-[10px] text-gray-400" id="sort_p5_applyDate"><i class="fa-solid fa-arrows-up-down text-gray-300"></i></span>
+                      </th>
+                      <th class="p-2 text-center bg-gray-50 border-b">更新日期</th>
+                      <th class="p-2 text-center transition-colors cursor-pointer hover:bg-gray-100 border-b" onclick="handleBoardSort('p5', 'createDate')">
+                        建立日期
+                        <span class="ml-1 text-[10px] text-gray-400" id="sort_p5_createDate"><i class="fa-solid fa-arrows-up-down text-gray-300"></i></span>
+                      </th>
+                      <th class="p-2 border-b">板階料號</th>
+                      <th class="p-2 text-center border-b">階段</th>
+                      <th class="p-2 text-center border-b">專案代碼</th>
+                      <th class="p-2 text-center border-b">申請人</th>
+                      <th class="p-2 text-center border-b">是否有BOM</th>
+                      <th class="p-2 text-center border-b">BOM發佈日</th>
+                      <th class="p-2 text-center border-b">建立人</th>
+                      <th class="p-2 text-center border-b">需求等級</th>
+                      <th class="p-2 text-center text-ms-blue bg-blue-50 border-b">
+                        <i class="fa-solid fa-calendar-clock text-sm"></i>
+                      </th>
+                      <th class="p-2 text-center text-red-600 bg-red-50 border-b border-gray-200">
+                        <i class="fa-solid fa-calendar-xmark text-sm"></i>
+                      </th>
+                      <th class="p-2 text-red-600 bg-red-50 border-b border-gray-200">說明</th>
+                    </tr>
+                  </thead>
+                  <tbody class="text-xs divide-y divide-gray-100" id="newBoardBody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="py-3 border-t border-gray-200 bg-gray-50 flex justify-center items-center gap-4 text-xs shrink-0 z-30 min-h-[45px]" id="pagination_p5"></div>
+            <div class="z-30 shrink-0 py-2 text-center bg-white border-t border-gray-200 auth-only" id="newBoardAddArea">
+              <button class="block mx-auto leading-none transition-transform hover:scale-110" onclick="addNewBoardRow()">
+                <i class="fa-solid fa-circle-plus text-ms-blue text-[35px] bg-white rounded-full shadow-sm"></i>
+              </button>
+              <div class="mt-2 font-medium text-xs text-gray-500">點擊新增一筆資料</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- ========== PAGE6 板階維護清單 ========== -->
+      <div class="flex flex-col overflow-hidden h-full bg-white border border-gray-200 rounded-lg shadow-md page" id="page6">
+        <div class="flex items-center justify-between shrink-0 px-6 py-4 bg-white border-b border-gray-200">
+          <h3 class="flex items-center gap-3 font-bold text-xl text-gray-800"><i class="fa-solid fa-list text-ms-blue"></i>板階維護清單<span id="fileTime_p6"></span></h3>
+          <div class="flex gap-2">
+            <select class="px-3 py-2 font-medium text-sm text-gray-600 border border-gray-300 rounded-md outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="yearSelect_p6" onchange="renderMaintainPage()"></select>
+            <button class="flex items-center gap-1 px-3 py-2 text-sm auth-only btn-primary" onclick="saveCurrentPageData(6)"><i class="fa-solid fa-floppy-disk"></i><span>儲存</span></button>
+            <button class="flex items-center gap-1 px-3 py-2 text-sm btn-success" onclick="exportMaintainExcel()"><i class="fa-solid fa-file-excel"></i><span>匯出</span></button>
+          </div>
+        </div>
+        <div class="flex flex-1 overflow-hidden bg-gray-50">
+          <div class="flex flex-col shrink-0 w-64 bg-white border-r border-gray-200">
+            <div class="p-3 bg-gray-50 border-b border-gray-100">
+              <h4 class="font-bold text-sm text-gray-700"><i class="fa-solid fa-calendar-days text-ms-blue mr-2"></i>月度統計</h4>
+            </div>
+            <div class="flex-1 overflow-y-auto">
+              <table class="w-full text-xs text-center">
+                <thead class="sticky top-0 z-10 font-semibold text-gray-500 bg-white shadow-sm">
+                  <tr>
+                    <th class="p-2 pl-6 text-left border-b">月份</th>
+                    <th class="p-2 border-b">筆數</th>
+                  </tr>
+                </thead>
+                <tbody class="text-gray-700 divide-y divide-gray-50" id="maintainSidebarBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="flex flex-col flex-1 overflow-hidden">
+            <div class="flex flex-col flex-1 overflow-hidden p-4" id="maintainScrollContainer">
+              <div class="relative flex-1 overflow-auto w-full bg-white border border-gray-200 rounded-lg">
+                <table class="w-full text-left whitespace-nowrap border-spacing-0 border-separate table-fixed">
+                  <colgroup>
+                    <col class="auth-only" style="width: 25px" /><!-- 刪除 -->
+                    <col style="width: 100px" /><!-- 日期 -->
+                    <col style="width: 350px" /><!-- 料號 -->
+                    <col style="width: 130px" /><!-- 維護人 -->
+                    <col /><!-- 備註 -->
+                  </colgroup>
+                  <thead class="sticky top-0 z-10 font-semibold text-xs tracking-tight text-gray-600 bg-gray-50 shadow-sm">
+                    <tr>
+                      <th class="p-2 auth-only border-b"></th>
+                      <th class="p-2 text-center transition-colors cursor-pointer hover:bg-gray-100 border-b" onclick="handleBoardSort('p6', 'date')">
+                        維護日期<span class="ml-1 text-[10px] text-gray-400" id="sort_p6_date"><i class="fa-solid fa-arrows-up-down text-gray-300"></i></span>
+                      </th>
+                      <th class="p-2 border-b">板階料號</th>
+                      <th class="p-2 border-b">維護人</th>
+                      <th class="p-2 border-b">備註</th>
+                    </tr>
+                  </thead>
+                  <tbody class="text-xs divide-y divide-gray-100" id="maintainBody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="py-3 border-t border-gray-200 bg-gray-50 flex justify-center items-center gap-4 text-xs shrink-0 z-30 min-h-[45px]" id="pagination_p6"></div>
+            <div class="z-30 shrink-0 py-4 bg-white border-t border-gray-200 auth-only flex items-center justify-center gap-6" id="maintainAddArea">
+              <div class="flex items-center gap-2">
+                <span class="font-medium text-xs text-gray-400">點擊新增一筆資料</span>
+                <button class="leading-none transition-transform hover:scale-110" onclick="addMaintainRow()">
+                  <i class="fa-solid fa-circle-plus text-ms-blue text-[35px] bg-white rounded-full shadow-sm"></i>
+                </button>
+              </div>
+              <div class="flex items-center gap-2">
+                <button class="leading-none transition-transform hover:scale-110" onclick="openMaintainPasteModal()">
+                  <i class="fa-solid fa-paste text-amber-500 text-[34px] bg-white rounded-full shadow-sm"></i>
+                </button>
+                <span class="font-medium text-xs text-gray-400">點擊批次新增資料</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- ========== PAGE7 PCB 統計報告 ========== -->
+      <div class="flex flex-col overflow-hidden h-full bg-white border border-gray-200 rounded-lg shadow-md page" id="page7">
+        <div class="flex items-center justify-between shrink-0 px-6 py-4 bg-white border-b border-gray-200">
+          <h3 class="flex items-center gap-3 font-bold text-xl text-gray-800"><span class="w-2 h-6 bg-ms-blue rounded-full"></span> PCB 統計報告</h3>
+          <div class="flex gap-3">
+            <select class="px-3 py-2 font-medium text-sm text-gray-600 border border-gray-300 rounded-md outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="pcbYearSelect" onchange="renderPCBReport()"></select>
+          </div>
+        </div>
+        <div class="flex-1 overflow-y-auto p-6 bg-gray-50/50">
+          <div class="max-w-[1600px] mx-auto">
+            <div class="grid gap-4 grid-cols-2 mb-8 md:grid-cols-6" id="pcbKpiCards"></div>
+            <div class="flex flex-col gap-6">
+              <!-- 月度統計表格 -->
+              <div class="overflow-hidden bg-white border border-gray-200 rounded-xl shadow-sm">
+                <div class="flex items-center justify-between p-3 bg-gray-50 border-b border-gray-100">
+                  <h4 class="font-bold text-sm text-gray-700"><i class="fa-solid fa-calendar-days text-ms-blue mr-2"></i>月度統計</h4>
+                </div>
+                <div>
+                  <table class="w-full text-xs text-center">
+                    <thead class="sticky top-0 font-semibold text-gray-500 bg-white shadow-sm">
+                      <tr>
+                        <th class="p-2 pl-6 text-left border-b">月份</th>
+                        <th class="p-2 text-blue-600 bg-blue-50 border-b">PCB 新建</th>
+                        <th class="p-2 text-emerald-600 bg-emerald-50 border-b">PCB 定版</th>
+                        <th class="p-2 text-amber-600 bg-amber-50 border-b">製作承認書</th>
+                        <th class="p-2 text-purple-600 bg-purple-50 border-b">歸檔承認書</th>
+                        <th class="p-2 text-cyan-600 bg-cyan-50 border-b">GPMS 啟動</th>
+                        <th class="p-2 text-rose-600 bg-rose-50 border-b">PCB 維護</th>
+                        <th class="p-2 text-gray-600 bg-gray-50 border-b">合計</th>
+                      </tr>
+                    </thead>
+                    <tbody class="text-gray-700 divide-y divide-gray-50" id="pcbReportBody"></tbody>
+                  </table>
+                </div>
+              </div>
+              <!-- 人員年度統計 -->
+              <div class="grid gap-4 grid-cols-1 md:grid-cols-2" id="pcbPersonStats"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- ========== PAGE3 PCB 詳細清單 ========== -->
+      <div class="flex flex-col h-full page" id="page3">
+        <div class="flex flex-col overflow-hidden h-full bg-white border border-gray-200 rounded-lg shadow-md">
+          <div class="flex items-center justify-between shrink-0 p-5 bg-white border-b border-gray-100">
+            <h3 class="flex items-center gap-3 font-bold text-xl text-gray-800"><i class="fa-solid fa-list text-ms-blue"></i>PCB 詳細清單<span id="fileTime_p3"></span></h3>
+            <div class="flex items-center gap-2">
+              <select class="px-3 py-2 font-medium text-sm text-gray-600 border border-gray-300 rounded-md outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="pcbListYearSelect" onchange="renderPCBKPITable()"></select>
+              <div class="relative">
+                <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400 pointer-events-none"><i class="fa-solid fa-magnifying-glass"></i></span>
+                <input class="w-64 py-2 pr-4 pl-9 text-sm border border-gray-300 rounded-lg outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="searchBox_p3" oninput="debouncedSearchP3();" placeholder="輸入搜尋關鍵字" type="text" autocomplete="off" />
+              </div>
+              <button class="search-help-btn" onclick="showSearchHelp('p3')" title="搜尋語法說明"><i class="fa-solid fa-circle-question"></i></button>
+              <button class="flex items-center gap-1 px-3 py-2 text-sm auth-only btn-primary" onclick="saveCurrentPageData(3)"><i class="fa-solid fa-floppy-disk"></i><span>儲存</span></button>
+              <button class="flex items-center gap-1 px-3 py-2 text-sm btn-success" onclick="exportPCBExcel()"><i class="fa-solid fa-file-excel"></i> <span>匯出</span></button>
+              <label class="flex items-center gap-1 px-3 py-2 text-sm cursor-pointer btn-primary auth-only"><i class="fa-solid fa-file-import"></i><span>匯入</span><input type="file" accept=".json" class="hidden" onchange="handlePcbJsonImport(this)"></label>
+              <button class="search-help-btn auth-only" onclick="document.getElementById('pcbImportGuideModal').classList.add('show')" title="匯入說明"><i class="fa-solid fa-circle-question"></i></button>
+            </div>
+          </div>
+          <div class="flex-1 overflow-auto">
+            <table class="w-full text-left whitespace-nowrap border-spacing-0 border-separate table-fixed" id="pcbTable">
+              <colgroup>
+                <col style="width: 150px" /><!--PCB單號-->
+                <col style="width: 180px" /><!--PCB料號-->
+                <col style="width: 70px" /><!--狀態-->
+                <col style="width: 110px" /><!--申請人-->
+                <col style="width: 65px" /><!--需求等級-->
+                <col style="width: 110px" /><!--二-->
+                <col style="width: 90px" /><!--二簽-->
+                <col style="width: 110px" /><!--三-->
+                <col style="width: 90px" /><!--三簽-->
+                <col style="width: 90px" /><!--更新日期1-->
+                <col style="width: 35px" /><!--2-3-->
+                <col style="width: 35px" /><!--逾期1-->
+                <col style="width: 350px" /><!--說明1-->
+                <col style="width: 110px" /><!--七-->
+                <col style="width: 90px" /><!--七簽-->
+                <col style="width: 110px" /><!--八-->
+                <col style="width: 90px" /><!--八簽-->
+                <col style="width: 90px" /><!--更新日期2-->
+                <col style="width: 35px" /><!--7-8-->
+                <col style="width: 35px" /><!--逾期2-->
+                <col style="width: 350px" /><!--說明2-->
+                <col style="width: 65px" /><!--承認-->
+                <col style="width: 110px" /><!--十三-->
+                <col style="width: 90px" /><!--十三簽-->
+                <col style="width: 110px" /><!--十五-->
+                <col style="width: 90px" /><!--十五簽-->
+                <col style="width: 35px" /><!--13-15-->
+              </colgroup>
+              <thead class="sticky top-0 z-40 font-semibold text-xs tracking-tight text-gray-600 bg-gray-50 border-b-2 border-gray-200 shadow-sm [&_th]:h-10 [&_th]:align-middle">
+                <tr>
+                  <th class="p-2 bg-gray-50 border-b border-gray-200 cursor-pointer sticky-col-cell sticky-corner sticky-no-shadow hover:bg-gray-100" onclick="sortPCBList('id')">
+                    PCB 單號
+                    <span class="ml-1 text-[10px]" id="sort_pcb_id"><i class="fa-solid fa-arrows-up-down text-gray-300"></i></span>
+                  </th>
+                  <th class="p-2 bg-gray-50 border-b border-gray-200 sticky-col-cell" style="left: 150px; z-index: 49;">PCB 料號</th>
+                  <th class="p-2 text-center bg-gray-50 border-b border-gray-200">狀態</th>
+                  <th class="p-2 text-center bg-gray-50 border-b border-gray-200">申請人</th>
+                  <th class="p-2 text-center bg-gray-50 border-b border-gray-200">需求等級</th>
+                  <th class="p-2 text-center bg-gray-50 border-b border-gray-200">【二】部門主管</th>
+                  <th class="p-2 text-center bg-gray-50 border-b border-gray-200">【二】簽核日</th>
+                  <th class="p-2 text-center bg-gray-50 border-b border-gray-200">【三】工程中心</th>
+                  <th class="p-2 text-center bg-gray-50 border-b border-gray-200">【三】簽核日</th>
+                  <th class="p-2 text-center bg-gray-50 border-b border-gray-200">更新日期</th>
+                  <th class="p-2 text-center text-ms-blue bg-blue-50 border-b border-gray-200" title="【二】簽核日 → 【三】簽核日">
+                    <i class="fa-solid fa-calendar-clock text-sm"></i>
+                  </th>
+                  <th class="p-2 text-center text-red-600 bg-red-50 border-b border-gray-200">
+                    <i class="fa-solid fa-calendar-xmark text-sm"></i>
+                  </th>
+                  <th class="p-2 text-red-600 bg-red-50 border-b border-gray-200">說明</th>
+                  <th class="p-2 text-center bg-gray-50 border-b border-gray-200">【七】Layout</th>
+                  <th class="p-2 text-center bg-gray-50 border-b border-gray-200">【七】簽核日</th>
+                  <th class="p-2 text-center bg-gray-50 border-b border-gray-200">【八】工程中心</th>
+                  <th class="p-2 text-center bg-gray-50 border-b border-gray-200">【八】簽核日</th>
+                  <th class="p-2 text-center bg-gray-50 border-b border-gray-200">更新日期</th>
+                  <th class="p-2 text-center text-ms-blue bg-blue-50 border-b border-gray-200" title="【七】簽核日 → 【八】簽核日">
+                    <i class="fa-solid fa-calendar-clock text-sm"></i>
+                  </th>
+                  <th class="p-2 text-center text-red-600 bg-red-50 border-b border-gray-200">
+                    <i class="fa-solid fa-calendar-xmark text-sm"></i>
+                  </th>
+                  <th class="p-2 text-red-600 bg-red-50 border-b border-gray-200">說明</th>
+                  <th class="p-2 text-center text-amber-700 bg-yellow-50 border-b border-gray-200 "title="優先取【十六】，無則取【十二】">承認PCB</th>
+                  <th class="px-1 py-2 text-center bg-gray-50 border-b border-gray-200">【十五】工程中心</th>
+                  <th class="px-1 py-2 text-center bg-gray-50 border-b border-gray-200">【十五】簽核日</th>
+                  <th class="px-1 py-2 text-center bg-gray-50 border-b border-gray-200">【十八】工程中心</th>
+                  <th class="px-1 py-2 text-center bg-gray-50 border-b border-gray-200">【十八】簽核日</th>
+                  <th class="px-1 py-2 text-center text-ms-blue bg-blue-50 border-b border-gray-200" title="【十五】簽核日 → 【十八】簽核日">
+                    <i class="fa-solid fa-calendar-clock text-sm"></i>
+                  </th>
+                </tr>
+              </thead>
+              <tbody class="text-xs divide-y divide-gray-100" id="pcbBody"></tbody>
+            </table>
+          </div>
+          <div class="py-3 border-t border-gray-200 bg-gray-50 flex justify-center items-center gap-4 text-xs shrink-0 z-30 min-h-[45px]" id="pagination_p3"></div>
+        </div>
+      </div>
+      <!-- ========== PAGE9 PCB 維護清單 ========== -->
+      <div class="flex flex-col overflow-hidden h-full bg-white border border-gray-200 rounded-lg shadow-md page" id="page9">
+        <div class="flex items-center justify-between shrink-0 px-6 py-4 bg-white border-b border-gray-200">
+          <h3 class="flex items-center gap-3 font-bold text-xl text-gray-800"><i class="fa-solid fa-list text-ms-blue"></i>PCB 維護清單<span id="fileTime_p9"></span></h3>
+          <div class="flex items-center gap-2">
+            <select class="px-3 py-2 font-medium text-sm text-gray-600 border border-gray-300 rounded-md outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="yearSelect_p9" onchange="renderPCBMaintainPage()"></select>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400 pointer-events-none"><i class="fa-solid fa-magnifying-glass"></i></span>
+              <input class="w-64 py-2 pr-4 pl-9 text-sm border border-gray-300 rounded-lg outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="searchBox_p9" oninput="debouncedSearchP9();" placeholder="輸入搜尋關鍵字" type="text" autocomplete="off" />
+            </div>
+            <button class="search-help-btn" onclick="showSearchHelp('p9')" title="搜尋語法說明"><i class="fa-solid fa-circle-question"></i></button>
+            <button class="flex items-center gap-1 px-3 py-2 text-sm auth-only btn-primary" onclick="saveCurrentPageData(9)"><i class="fa-solid fa-floppy-disk"></i><span>儲存</span></button>
+            <button class="flex items-center gap-1 px-3 py-2 text-sm btn-success" onclick="exportPCBMaintainExcel()"><i class="fa-solid fa-file-excel"></i><span>匯出</span></button>
+          </div>
+        </div>
+        <div class="flex flex-1 overflow-hidden bg-gray-50">
+          <div class="flex flex-col shrink-0 w-64 bg-white border-r border-gray-200">
+            <div class="p-3 bg-gray-50 border-b border-gray-100">
+              <h4 class="font-bold text-sm text-gray-700"><i class="fa-solid fa-calendar-days text-ms-blue mr-2"></i>月度統計</h4>
+            </div>
+            <div class="flex-1 overflow-y-auto">
+              <table class="w-full text-xs text-center">
+                <thead class="sticky top-0 z-10 font-semibold text-gray-500 bg-white shadow-sm">
+                  <tr>
+                    <th class="p-2 pl-6 text-left border-b">月份</th>
+                    <th class="p-2 border-b">筆數</th>
+                  </tr>
+                </thead>
+                <tbody class="text-gray-700 divide-y divide-gray-50" id="pcbMaintainSidebarBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="flex flex-col flex-1 overflow-hidden">
+            <div class="flex flex-col flex-1 overflow-hidden p-4" id="pcbMaintainScrollContainer">
+              <div class="relative flex-1 overflow-auto w-full bg-white border border-gray-200 rounded-lg">
+                <table class="w-full text-left whitespace-nowrap border-spacing-0 border-separate table-fixed">
+                  <colgroup>
+                    <col class="auth-only" style="width: 20px" /><!-- 刪除 -->
+                    <col style="width: 100px" /><!-- 日期 -->
+                    <col style="width: 200px" /><!-- 料號 -->
+                    <col style="width: 130px" /><!-- 維護人 -->
+                    <col style="width: 270px" /><!-- 類別 -->
+                    <col style="width: 270px" /><!-- 備註 -->
+                  </colgroup>
+                  <thead class="sticky top-0 z-10 font-semibold text-xs tracking-tight text-gray-600 bg-gray-50 shadow-sm">
+                    <tr>
+                      <th class="p-2 auth-only border-b"></th>
+                      <th class="p-2 text-center border-b">維護日期</th>
+                      <th class="p-2 border-b">PCB 料號</th>
+                      <th class="p-2 border-b">維護人</th>
+                      <th class="p-2 border-b">類別</th>
+                      <th class="p-2 border-b">備註</th>
+                    </tr>
+                  </thead>
+                  <tbody class="text-xs divide-y divide-gray-100" id="pcbMaintainBody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="py-3 border-t border-gray-200 bg-gray-50 flex justify-center items-center gap-4 text-xs shrink-0 z-30 min-h-[45px]" id="pagination_p9"></div>
+            <div class="z-30 shrink-0 py-2 text-center bg-white border-t border-gray-200 auth-only" id="pcbMaintainAddArea">
+              <button class="block mx-auto leading-none transition-transform hover:scale-110" onclick="addNewPCBMaintainRow()">
+                <i class="fa-solid fa-circle-plus text-ms-blue text-[35px] bg-white rounded-full shadow-sm"></i>
+              </button>
+              <div class="mt-2 font-medium text-xs text-gray-500">點擊新增一筆資料</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- ========== PAGE8 GPMS 啟動清單 ========== -->
+      <div class="flex flex-col overflow-hidden h-full bg-white border border-gray-200 rounded-lg shadow-md page" id="page8">
+        <div class="flex items-center justify-between shrink-0 px-6 py-4 bg-white border-b border-gray-200">
+          <h3 class="flex items-center gap-3 font-bold text-xl text-gray-800"><i class="fa-solid fa-list text-ms-blue"></i>GPMS 啟動清單<span id="fileTime_p8"></span></h3>
+          <div class="flex items-center gap-2">
+            <select class="px-3 py-2 font-medium text-sm text-gray-600 border border-gray-300 rounded-md outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="yearSelect_p8" onchange="renderGPMSPage()"></select>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400 pointer-events-none"><i class="fa-solid fa-magnifying-glass"></i></span>
+              <input class="w-64 py-2 pr-4 pl-9 text-sm border border-gray-300 rounded-lg outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="searchBox_p8" oninput="debouncedSearchP8();" placeholder="輸入搜尋關鍵字" type="text" autocomplete="off" />
+            </div>
+            <button class="search-help-btn" onclick="showSearchHelp('p8')" title="搜尋語法說明"><i class="fa-solid fa-circle-question"></i></button>
+            <button class="flex items-center gap-1 px-3 py-2 text-sm auth-only btn-primary" onclick="saveCurrentPageData(8)"><i class="fa-solid fa-floppy-disk"></i><span>儲存</span></button>
+            <button class="flex items-center gap-1 px-3 py-2 text-sm btn-success" onclick="exportGPMSExcel()"><i class="fa-solid fa-file-excel"></i><span>匯出</span></button>
+          </div>
+        </div>
+        <div class="flex flex-1 overflow-hidden bg-gray-50">
+          <div class="flex flex-col shrink-0 w-64 bg-white border-r border-gray-200">
+            <div class="p-3 bg-gray-50 border-b border-gray-100">
+              <h4 class="font-bold text-sm text-gray-700"><i class="fa-solid fa-calendar-days text-ms-blue mr-2"></i>月度統計</h4>
+            </div>
+            <div class="flex-1 overflow-y-auto">
+              <table class="w-full text-xs text-center">
+                <thead class="sticky top-0 z-10 font-semibold text-gray-500 bg-white shadow-sm">
+                  <tr>
+                    <th class="p-2 pl-6 text-left border-b">月份</th>
+                    <th class="p-2 border-b">筆數</th>
+                  </tr>
+                </thead>
+                <tbody class="text-gray-700 divide-y divide-gray-50" id="gpmsSidebarBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="flex flex-col flex-1 overflow-hidden">
+            <div class="flex flex-col flex-1 overflow-hidden p-4" id="gpmsScrollContainer">
+              <div class="relative flex-1 overflow-auto w-full bg-white border border-gray-200 rounded-lg">
+                <table class="w-full text-left whitespace-nowrap border-spacing-0 border-separate table-fixed">
+                  <colgroup>
+                    <col style="width: 100px" /><!-- 啟動日期 -->
+                    <col style="width: 150px" /><!-- PCB 單號 -->
+                    <col style="width: 200px" /><!-- PCB 料號 -->
+                    <col style="width: 130px" /><!-- 執行人 -->
+                    <col style="width: 340px" /><!-- 備註 -->
+                  </colgroup>
+                  <thead class="sticky top-0 z-10 font-semibold text-xs tracking-tight text-gray-600 bg-gray-50 shadow-sm">
+                    <tr>
+                      <th class="p-2 text-center border-b">啟動日期</th>
+                      <th class="p-2 text-center border-b">PCB 單號</th>
+                      <th class="p-2 border-b">PCB 料號</th>
+                      <th class="p-2 border-b">執行人</th>
+                      <th class="p-2 border-b">備註</th>
+                    </tr>
+                  </thead>
+                  <tbody class="text-xs divide-y divide-gray-100" id="gpmsBody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="py-3 border-t border-gray-200 bg-gray-50 flex justify-center items-center gap-4 text-xs shrink-0 z-30 min-h-[45px]" id="pagination_p8"></div>
+          </div>
+        </div>
+      </div>
+      <!-- ========== PAGE18 其他統計報告 ========== -->
+      <div class="flex flex-col overflow-hidden h-full bg-white border border-gray-200 rounded-lg shadow-md page" id="page18">
+        <div class="flex items-center justify-between shrink-0 px-6 py-4 bg-white border-b border-gray-200">
+          <h3 class="flex items-center gap-3 font-bold text-xl text-gray-800"><span class="w-2 h-6 bg-ms-blue rounded-full"></span>其他統計報告</h3>
+          <div class="flex gap-3">
+            <select class="px-3 py-2 font-medium text-sm text-gray-600 border border-gray-300 rounded-md outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="otherReportYearSelect" onchange="renderOtherReport()"></select>
+          </div>
+        </div>
+        <div class="flex-1 overflow-y-auto p-6 bg-gray-50/50">
+          <div class="max-w-[1600px] mx-auto">
+            <!-- KPI 卡片 -->
+            <div class="grid gap-4 grid-cols-2 mb-8 md:grid-cols-5" id="otherKpiCards"></div>
+            <div class="flex flex-col gap-6">
+              <!-- 月度統計表格 -->
+              <div class="overflow-hidden bg-white border border-gray-200 rounded-xl shadow-sm">
+                <div class="flex items-center justify-between p-3 bg-gray-50 border-b border-gray-100">
+                  <h4 class="font-bold text-sm text-gray-700"><i class="fa-solid fa-calendar-days text-ms-blue mr-2"></i>月度統計</h4>
+                </div>
+                <div>
+                  <table class="w-full text-xs text-center">
+                    <thead class="sticky top-0 font-semibold text-gray-500 bg-white shadow-sm">
+                      <tr>
+                        <th class="p-2 pl-6 text-left border-b">月份</th>
+                        <th class="p-2 text-blue-600 bg-blue-50 border-b">資料匯出</th>
+                        <th class="p-2 text-emerald-600 bg-emerald-50 border-b">協助項目</th>
+                        <th class="p-2 text-amber-600 bg-amber-50 border-b">停用取替</th>
+                        <th class="p-2 text-purple-600 bg-purple-50 border-b">BOM 建立</th>
+                        <th class="p-2 text-cyan-600 bg-cyan-50 border-b">管制文件</th>
+                      </tr>
+                    </thead>
+                    <tbody class="text-gray-700 divide-y divide-gray-50" id="otherReportBody"></tbody>
+                  </table>
+                </div>
+              </div>
+              <!-- 人員年度統計 -->
+              <div class="grid gap-4 grid-cols-1 md:grid-cols-2" id="otherPersonStats"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- ========== PAGE11 明細匯出統計 ========== -->
+      <div class="flex flex-col overflow-hidden h-full bg-white border border-gray-200 rounded-lg shadow-md page" id="page11">
+        <div class="flex items-center justify-between shrink-0 px-6 py-4 bg-white border-b border-gray-200">
+          <h3 class="flex items-center gap-3 font-bold text-xl text-gray-800"><i class="fa-solid fa-list text-ms-blue"></i>資料匯出統計<span id="fileTime_p11"></span></h3>
+          <div class="flex gap-3">
+            <select class="px-3 py-2 font-medium text-sm text-gray-600 border border-gray-300 rounded-md outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="plmYearSelect" onchange="renderPLMPage()"></select>
+            <button class="flex items-center gap-1 px-3 py-2 text-sm auth-only btn-primary" onclick="saveCurrentPageData(11)"><i class="fa-solid fa-floppy-disk"></i><span>儲存</span></button>
+            <button class="flex items-center gap-1 px-3 py-2 text-sm btn-success" onclick="exportPLMExcel()"><i class="fa-solid fa-file-excel"></i><span>匯出</span></button>
+          </div>
+        </div>
+        <div class="flex flex-1 overflow-hidden bg-gray-50">
+          <div class="flex flex-col shrink-0 w-64 bg-white border-r border-gray-200">
+            <div class="p-3 bg-gray-50 border-b border-gray-100">
+              <h4 class="font-bold text-sm text-gray-700"><i class="fa-solid fa-calendar-days text-ms-blue mr-2"></i>月度統計</h4>
+            </div>
+            <div class="flex-1 overflow-y-auto">
+              <table class="w-full text-xs text-center">
+                <thead class="sticky top-0 z-10 font-semibold text-gray-500 bg-white shadow-sm">
+                  <tr>
+                    <th class="p-2 pl-6 text-left border-b">月份</th>
+                    <th class="p-2 border-b">筆數</th>
+                  </tr>
+                </thead>
+                <tbody class="text-gray-700 divide-y divide-gray-50" id="plmSidebarBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="flex flex-col flex-1 overflow-hidden">
+            <div class="flex flex-col flex-1 overflow-hidden p-4" id="plmScrollContainer">
+              <div class="relative flex-1 overflow-auto w-full bg-white border border-gray-200 rounded-lg">
+                <table class="w-full text-left whitespace-nowrap border-spacing-0 border-separate table-fixed">
+                  <colgroup>
+                    <col class="auth-only" style="width: 20px" /><!-- 刪除 -->
+                    <col style="width: 100px"><!-- 日期 -->
+                    <col style="width: 50px"><!-- 星期 -->
+                    <col><!-- 分類 -->
+                    <col style="width: 130px"><!-- 執行人 -->
+                  </colgroup>
+                  <thead class="sticky top-0 z-20 font-semibold text-xs tracking-tight text-gray-600 bg-gray-50 shadow-sm">
+                    <tr>
+                      <th class="p-2 bg-gray-50 border-b auth-only"></th>
+                      <th class="p-2 text-center bg-gray-50 border-b">日期</th>
+                      <th class="p-2 text-center bg-gray-50 border-b">星期</th>
+                      <th class="p-2 bg-gray-50 border-b">明細分類</th>
+                      <th class="p-2 text-center bg-gray-50 border-b">執行人</th>
+                    </tr>
+                  </thead>
+                  <tbody class="text-xs divide-y divide-gray-100" id="plmBody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="py-3 border-t border-gray-200 bg-gray-50 flex justify-center items-center gap-4 text-xs shrink-0 z-30 min-h-[45px]" id="pagination_p11"></div>
+            <div class="z-30 shrink-0 py-2 text-center bg-white border-t border-gray-200 auth-only" id="plmAddArea">
+              <button class="block mx-auto leading-none transition-transform hover:scale-110" onclick="addPLMRow()">
+                <i class="fa-solid fa-circle-plus text-ms-blue text-[35px] bg-white rounded-full shadow-sm"></i>
+              </button>
+              <div class="mt-2 font-medium text-xs text-gray-500">點擊新增一筆資料</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- ========== PAGE12 協助項目統計 ========== -->
+      <div class="flex flex-col overflow-hidden h-full bg-white border border-gray-200 rounded-lg shadow-md page" id="page12">
+        <div class="flex items-center justify-between shrink-0 px-6 py-4 bg-white border-b border-gray-200">
+          <h3 class="flex items-center gap-3 font-bold text-xl text-gray-800"><i class="fa-solid fa-list text-ms-blue"></i>協助項目統計<span id="fileTime_p12"></span></h3>
+          <div class="flex items-center gap-2">
+            <select class="px-3 py-2 font-medium text-sm text-gray-600 border border-gray-300 rounded-md outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="assistYearSelect" onchange="renderAssistPage()"></select>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400 pointer-events-none"><i class="fa-solid fa-magnifying-glass"></i></span>
+              <input class="w-64 py-2 pr-4 pl-9 text-sm border border-gray-300 rounded-lg outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="searchBox_p12" oninput="debouncedSearchP12();" placeholder="輸入搜尋關鍵字" type="text" autocomplete="off" />
+            </div>
+            <button class="search-help-btn" onclick="showSearchHelp('p12')" title="搜尋語法說明"><i class="fa-solid fa-circle-question"></i></button>
+            <button class="flex items-center gap-1 px-3 py-2 text-sm auth-only btn-primary" onclick="saveCurrentPageData(12)"><i class="fa-solid fa-floppy-disk"></i><span>儲存</span></button>
+            <button class="flex items-center gap-1 px-3 py-2 text-sm btn-success" onclick="exportAssistExcel()"><i class="fa-solid fa-file-excel"></i> <span>匯出</span></button>
+          </div>
+        </div>
+        <div class="flex flex-1 overflow-hidden bg-gray-50">
+          <div class="flex flex-col shrink-0 w-64 bg-white border-r border-gray-200">
+            <div class="p-3 bg-gray-50 border-b border-gray-100">
+              <h4 class="font-bold text-sm text-gray-700"><i class="fa-solid fa-calendar-days text-ms-blue mr-2"></i>月度統計</h4>
+            </div>
+            <div class="flex-1 overflow-y-auto">
+              <table class="w-full text-xs text-center">
+                <thead class="sticky top-0 z-10 font-semibold text-gray-500 bg-white shadow-sm">
+                  <tr>
+                    <th class="p-2 pl-4 text-left border-b">月份</th>
+                    <th class="p-2 text-center border-b">筆數</th>
+                    <th class="p-2 text-center border-b">內部</th>
+                    <th class="p-2 text-center border-b">跨部門</th>
+                  </tr>
+                </thead>
+                <tbody class="text-gray-700 divide-y divide-gray-50" id="assistSidebarBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="flex flex-col flex-1 overflow-hidden">
+            <div class="flex flex-col flex-1 overflow-hidden p-4" id="assistScrollContainer">
+              <div class="relative flex-1 overflow-auto w-full bg-white border border-gray-200 rounded-lg">
+                <table class="w-full text-left whitespace-nowrap border-spacing-0 border-separate table-fixed">
+                  <colgroup>
+                    <col class="auth-only" style="width: 20px" /><!-- 刪除 -->
+                    <col style="width: 100px" /><!-- 日期 -->
+                    <col style="width: 110px" /><!-- 類別 -->
+                    <col style="width: 250px" /><!-- 內容 -->
+                    <col style="width: 130px" /><!-- 人員 -->
+                    <col style="width: 450px" /><!-- 備註 -->
+                  </colgroup>
+                  <thead class="sticky top-0 z-20 font-semibold text-xs tracking-tight text-gray-600 bg-gray-50 shadow-sm">
+                    <tr>
+                      <th class="p-2 bg-gray-50 border-b auth-only"></th>
+                      <th class="p-2 text-center bg-gray-50 border-b">日期</th>
+                      <th class="p-2 text-center bg-gray-50 border-b">類別</th>
+                      <th class="p-2 bg-gray-50 border-b">內容</th>
+                      <th class="p-2 bg-gray-50 border-b">執行人</th>
+                      <th class="p-2 bg-gray-50 border-b">備註</th>
+                    </tr>
+                  </thead>
+                  <tbody class="text-xs divide-y divide-gray-100" id="assistBody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="py-3 border-t border-gray-200 bg-gray-50 flex justify-center items-center gap-4 text-xs shrink-0 z-30 min-h-[45px]" id="pagination_p12"></div>
+            <div class="z-30 shrink-0 py-2 text-center bg-white border-t border-gray-200 auth-only" id="assistAddArea">
+              <button class="block mx-auto leading-none transition-transform hover:scale-110" onclick="addAssistRow()">
+                <i class="fa-solid fa-circle-plus text-ms-blue text-[35px] bg-white rounded-full shadow-sm"></i>
+              </button>
+              <div class="mt-2 font-medium text-xs text-gray-500">點擊新增一筆資料</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- ========== PAGE14 停用替代 ========== -->
+      <div class="flex flex-col overflow-hidden h-full bg-white border border-gray-200 rounded-lg shadow-md page" id="page14">
+        <div class="flex items-center justify-between shrink-0 px-6 py-4 bg-white border-b border-gray-200">
+          <h3 class="flex items-center gap-3 font-bold text-xl text-gray-800"><i class="fa-solid fa-list text-ms-blue"></i>停用取替代統計<span id="fileTime_p14"></span></h3>
+          <div class="flex items-center gap-2">
+            <select class="px-3 py-2 font-medium text-sm text-gray-600 border border-gray-300 rounded-md outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="disableYearSelect" onchange="renderDisablePage()"></select>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400 pointer-events-none"><i class="fa-solid fa-magnifying-glass"></i></span>
+              <input class="w-64 py-2 pr-4 pl-9 text-sm border border-gray-300 rounded-lg outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="searchBox_p14" oninput="debouncedSearchP14();" placeholder="輸入搜尋關鍵字" type="text" autocomplete="off" />
+            </div>
+            <button class="search-help-btn" onclick="showSearchHelp('p14')" title="搜尋語法說明"><i class="fa-solid fa-circle-question"></i></button>
+            <button class="search-help-btn" id="undisabledEcnBtn" onclick="showUndisabledEcnModal()" title="檢查未停用取替代 ECN" style="display:none"><i class="fa-solid fa-circle-exclamation text-red-500"></i></button>
+            <button class="flex items-center gap-1 px-3 py-2 text-sm auth-only btn-primary" onclick="saveCurrentPageData(14)"><i class="fa-solid fa-floppy-disk"></i><span>儲存</span></button>
+            <button class="flex items-center gap-1 px-3 py-2 text-sm btn-success" onclick="exportDisableExcel()"><i class="fa-solid fa-file-excel"></i> <span>匯出</span></button>
+          </div>
+        </div>
+        <div class="flex flex-1 overflow-hidden bg-gray-50">
+          <div class="flex flex-col shrink-0 w-64 bg-white border-r border-gray-200">
+            <div class="p-3 bg-gray-50 border-b border-gray-100">
+              <h4 class="font-bold text-sm text-gray-700"><i class="fa-solid fa-calendar-days text-ms-blue mr-2"></i>月度統計</h4>
+            </div>
+            <div class="flex-1 overflow-y-auto">
+              <table class="w-full text-xs text-center">
+                <thead class="sticky top-0 z-10 font-semibold text-gray-500 bg-white shadow-sm">
+                  <tr>
+                    <th class="p-2 pl-6 text-left border-b">月份</th>
+                    <th class="p-2 border-b">筆數</th>
+                  </tr>
+                </thead>
+                <tbody class="text-gray-700 divide-y divide-gray-50" id="disableSidebarBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="flex flex-col flex-1 overflow-hidden">
+            <div class="flex flex-col flex-1 overflow-hidden p-4" id="disableScrollContainer">
+              <div class="relative flex-1 overflow-auto w-full bg-white border border-gray-200 rounded-lg">
+                <table class="w-full min-w-[1000px] text-left whitespace-nowrap border-spacing-0 border-separate table-fixed">
+                  <colgroup>
+                    <col class="auth-only" style="width: 20px" /><!-- 刪除 -->
+                    <col style="width: 100px" /><!-- 日期 -->
+                    <col style="width: 140px" /><!-- 單號 -->
+                    <col style="width: 70px" /><!-- 階層 -->
+                    <col style="width: 350px" /><!-- 料號 -->
+                    <col style="width: 130px" /><!-- 執行人 -->
+                    <col /><!-- 備註 -->
+                  </colgroup>
+                  <thead class="sticky top-0 z-20 font-semibold text-xs tracking-tight text-gray-600 bg-gray-50 shadow-sm">
+                    <tr>
+                      <th class="p-2 bg-gray-50 border-b auth-only"></th>
+                      <th class="p-2 text-center bg-gray-50 border-b">日期</th>
+                      <th class="p-2 bg-gray-50 border-b">ECN 單號</th>
+                      <th class="p-2 text-center bg-gray-50 border-b">階層</th>
+                      <th class="p-2 bg-gray-50 border-b">料號 (自動偵測階層)</th>
+                      <th class="p-2 bg-gray-50 border-b">執行人</th>
+                      <th class="p-2 bg-gray-50 border-b">備註</th>
+                    </tr>
+                  </thead>
+                  <tbody class="text-xs divide-y divide-gray-100" id="disableBody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="py-3 border-t border-gray-200 bg-gray-50 flex justify-center items-center gap-4 text-xs shrink-0 z-30 min-h-[45px]" id="pagination_p14"></div>
+            <div class="z-30 shrink-0 py-4 bg-white border-t border-gray-200 auth-only flex items-center justify-center gap-6" id="disableAddArea">
+              <!-- 新增一筆 -->
+              <div class="flex items-center gap-2">
+                <span class="font-medium text-xs text-gray-400">點擊新增一筆資料</span>
+                <button class="leading-none transition-transform hover:scale-110" onclick="addDisableRow()">
+                  <i class="fa-solid fa-circle-plus text-ms-blue text-[35px] bg-white rounded-full shadow-sm"></i>
+                </button>
+              </div>
+              <!-- 批次貼上 -->
+              <div class="flex items-center gap-2">
+                <button class="leading-none transition-transform hover:scale-110" onclick="openDisablePasteModal()">
+                  <i class="fa-solid fa-paste text-amber-500 text-[34px] bg-white rounded-full shadow-sm"></i>
+                </button>
+                <span class="font-medium text-xs text-gray-400">點擊批次新增資料</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- ========== PAGE17 BOM 建立 ========== -->
+      <div class="flex flex-col overflow-hidden h-full bg-white border border-gray-200 rounded-lg shadow-md page" id="page17">
+        <div class="flex items-center justify-between shrink-0 px-6 py-4 bg-white border-b border-gray-200">
+          <h3 class="flex items-center gap-3 font-bold text-xl text-gray-800"><i class="fa-solid fa-list text-ms-blue"></i>BOM 建立統計<span id="fileTime_p17"></span></h3>
+          <div class="flex items-center gap-2">
+            <select class="px-3 py-2 font-medium text-sm text-gray-600 border border-gray-300 rounded-md outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="bomYearSelect" onchange="renderBOMPage()"></select>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400 pointer-events-none"><i class="fa-solid fa-magnifying-glass"></i></span>
+              <input class="w-64 py-2 pr-4 pl-9 text-sm border border-gray-300 rounded-lg outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="searchBox_p17" oninput="debouncedSearchP17();" placeholder="輸入搜尋關鍵字" type="text" autocomplete="off" />
+            </div>
+            <button class="search-help-btn" onclick="showSearchHelp('p17')" title="搜尋語法說明"><i class="fa-solid fa-circle-question"></i></button>
+            <button class="flex items-center gap-1 px-3 py-2 text-sm auth-only btn-primary" onclick="saveCurrentPageData(17)"><i class="fa-solid fa-floppy-disk"></i><span>儲存</span></button>
+            <button class="flex items-center gap-1 px-3 py-2 text-sm btn-success" onclick="exportBOMExcel()"><i class="fa-solid fa-file-excel"></i><span>匯出</span></button>
+          </div>
+        </div>
+        <div class="flex flex-1 overflow-hidden bg-gray-50">
+          <!-- 左側月度統計 -->
+          <div class="flex flex-col shrink-0 w-64 bg-white border-r border-gray-200">
+            <div class="p-3 bg-gray-50 border-b border-gray-100">
+              <h4 class="font-bold text-sm text-gray-700"><i class="fa-solid fa-calendar-days text-ms-blue mr-2"></i>月度統計</h4>
+            </div>
+            <div class="flex-1 overflow-y-auto">
+              <table class="w-full text-xs text-center">
+                <thead class="sticky top-0 z-10 font-semibold text-gray-500 bg-white shadow-sm">
+                  <tr>
+                    <th class="p-2 pl-6 text-left border-b">月份</th>
+                    <th class="p-2 border-b">筆數</th>
+                  </tr>
+                </thead>
+                <tbody class="text-gray-700 divide-y divide-gray-50" id="bomSidebarBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <!-- 右側表格 -->
+          <div class="flex flex-col flex-1 overflow-hidden">
+            <div class="flex flex-col flex-1 overflow-hidden p-4" id="bomScrollContainer">
+              <div class="relative flex-1 overflow-auto w-full bg-white border border-gray-200 rounded-lg">
+                <table class="w-full min-w-[1000px] text-left whitespace-nowrap border-spacing-0 border-separate table-fixed">
+                  <colgroup>
+                    <col class="auth-only" style="width: 20px" />
+                    <col style="width: 90px" /><!-- 收件日期 -->
+                    <col style="width: 90px" /><!-- 更新日期 -->
+                    <col style="width: 100px" /><!-- 申請人 -->
+                    <col style="width: 50px" /><!-- 單位 -->
+                    <col style="width: 310px" /><!-- 料號 -->
+                    <col style="width: 45px" /><!-- 階段 -->
+                    <col style="width: 80px" /><!-- 等級 -->
+                    <col style="width: 90px" /><!-- 完成日期 -->
+                    <col style="width: 130px" /><!-- 執行人 -->
+                    <col style="width: 35px" /><!-- 工作天數 -->
+                    <col style="width: 35px" /><!-- 逾期 -->
+                    <col style="width: 350px" /><!-- 逾期說明 -->
+                  </colgroup>
+                  <thead class="sticky top-0 z-20 font-semibold text-xs tracking-tight text-gray-600 bg-gray-50 shadow-sm">
+                    <tr>
+                      <th class="p-2 bg-gray-50 border-b auth-only"></th>
+                      <th class="p-2 text-center bg-gray-50 border-b">收件日期</th>
+                      <th class="p-2 text-center bg-gray-50 border-b">更新日期</th>
+                      <th class="p-2 text-center bg-gray-50 border-b">申請人</th>
+                      <th class="p-2 text-center bg-gray-50 border-b">單位</th>
+                      <th class="p-2 bg-gray-50 border-b">料號</th>
+                      <th class="p-2 text-center bg-gray-50 border-b">階段</th>
+                      <th class="p-2 text-center bg-gray-50 border-b">需求等級</th>
+                      <th class="p-2 text-center bg-gray-50 border-b">完成日期</th>
+                      <th class="p-2 text-center bg-gray-50 border-b">執行人</th>
+                      <th class="p-2 text-center text-ms-blue bg-blue-50 border-b">
+                        <i class="fa-solid fa-calendar-clock text-sm"></i>
+                      </th>
+                      <th class="p-2 text-center text-red-600 bg-red-50 border-b border-gray-200">
+                        <i class="fa-solid fa-calendar-xmark text-sm"></i>
+                      </th>
+                      <th class="p-2 text-red-600 bg-red-50 border-b border-gray-200">說明</th>
+                    </tr>
+                  </thead>
+                  <tbody class="text-xs divide-y divide-gray-100" id="bomBody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="py-3 border-t border-gray-200 bg-gray-50 flex justify-center items-center gap-4 text-xs shrink-0 z-30 min-h-[45px]" id="pagination_p17"></div>
+            <div class="z-30 shrink-0 py-2 text-center bg-white border-t border-gray-200 auth-only" id="bomAddArea">
+              <button class="block mx-auto leading-none transition-transform hover:scale-110" onclick="addBOMRow()">
+                <i class="fa-solid fa-circle-plus text-ms-blue text-[35px] bg-white rounded-full shadow-sm"></i>
+              </button>
+              <div class="mt-2 font-medium text-xs text-gray-500">點擊新增一筆資料</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- ========== PAGE19 管制文件申請統計 ========== -->
+      <div class="flex flex-col overflow-hidden h-full bg-white border border-gray-200 rounded-lg shadow-md page" id="page19">
+        <div class="flex items-center justify-between shrink-0 px-6 py-4 bg-white border-b border-gray-200">
+          <h3 class="flex items-center gap-3 font-bold text-xl text-gray-800"><i class="fa-solid fa-file-lock text-ms-blue"></i>管制文件申請統計<span id="fileTime_p19"></span></h3>
+          <div class="flex items-center gap-2">
+            <select class="px-3 py-2 font-medium text-sm text-gray-600 border border-gray-300 rounded-md outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="dccYearSelect" onchange="renderDccPage()"></select>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400 pointer-events-none"><i class="fa-solid fa-magnifying-glass"></i></span>
+              <input class="w-64 py-2 pr-4 pl-9 text-sm border border-gray-300 rounded-lg outline-none shadow-sm focus:ring-2 focus:ring-ms-blue" id="searchBox_p19" oninput="debouncedSearchP19();" placeholder="輸入搜尋關鍵字" type="text" autocomplete="off" />
+            </div>
+            <button class="search-help-btn" onclick="showSearchHelp('p19')" title="搜尋語法說明"><i class="fa-solid fa-circle-question"></i></button>
+            <button class="flex items-center gap-1 px-3 py-2 text-sm auth-only btn-primary" onclick="saveCurrentPageData(19)"><i class="fa-solid fa-floppy-disk"></i><span>儲存</span></button>
+            <button class="flex items-center gap-1 px-3 py-2 text-sm btn-success" onclick="exportDccExcel()"><i class="fa-solid fa-file-excel"></i> <span>匯出</span></button>
+          </div>
+        </div>
+        <div class="flex flex-1 overflow-hidden bg-gray-50">
+          <div class="flex flex-col shrink-0 w-64 bg-white border-r border-gray-200">
+            <div class="p-3 bg-gray-50 border-b border-gray-100">
+              <h4 class="font-bold text-sm text-gray-700"><i class="fa-solid fa-calendar-days text-ms-blue mr-2"></i>月度統計</h4>
+            </div>
+            <div class="flex-1 overflow-y-auto">
+              <table class="w-full text-xs text-center">
+                <thead class="sticky top-0 z-10 font-semibold text-gray-500 bg-white shadow-sm">
+                  <tr>
+                    <th class="p-2 pl-4 text-left border-b">月份</th>
+                    <th class="p-2 text-center border-b">筆數</th>
+                  </tr>
+                </thead>
+                <tbody class="text-gray-700 divide-y divide-gray-50" id="dccSidebarBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="flex flex-col flex-1 overflow-hidden">
+            <div class="flex flex-col flex-1 overflow-hidden p-4" id="dccScrollContainer">
+              <div class="relative flex-1 overflow-auto w-full bg-white border border-gray-200 rounded-lg">
+                <table class="w-full text-left whitespace-nowrap border-spacing-0 border-separate table-fixed">
+                  <colgroup>
+                    <col class="auth-only" style="width: 20px" /><!-- 刪除 -->
+                    <col style="width: 110px" /><!-- 日期 -->
+                    <col style="width: 130px" /><!-- 申請人 -->
+                    <col style="width: 150px" /><!-- 申請單位 -->
+                    <col style="width: 300px" /><!-- 內容 -->
+                    <col style="width: 130px" /><!-- 執行人 -->
+                    <col style="width: 450px" /><!-- 備註 -->
+                  </colgroup>
+                  <thead class="sticky top-0 z-20 font-semibold text-xs tracking-tight text-gray-600 bg-gray-50 shadow-sm">
+                    <tr>
+                      <th class="p-2 bg-gray-50 border-b auth-only"></th>
+                      <th class="p-2 text-center bg-gray-50 border-b">日期</th>
+                      <th class="p-2 bg-gray-50 border-b">申請人</th>
+                      <th class="p-2 bg-gray-50 border-b">申請單位</th>
+                      <th class="p-2 bg-gray-50 border-b">內容</th>
+                      <th class="p-2 bg-gray-50 border-b">執行人</th>
+                      <th class="p-2 bg-gray-50 border-b">備註</th>
+                    </tr>
+                  </thead>
+                  <tbody class="text-xs divide-y divide-gray-100" id="dccBody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="py-3 border-t border-gray-200 bg-gray-50 flex justify-center items-center gap-4 text-xs shrink-0 z-30 min-h-[45px]" id="pagination_p19"></div>
+            <div class="z-30 shrink-0 py-2 text-center bg-white border-t border-gray-200 auth-only" id="dccAddArea">
+              <button class="block mx-auto leading-none transition-transform hover:scale-110" onclick="addDccRow()">
+                <i class="fa-solid fa-circle-plus text-ms-blue text-[35px] bg-white rounded-full shadow-sm"></i>
+              </button>
+              <div class="mt-2 font-medium text-xs text-gray-500">點擊新增一筆資料</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- ========== PAGE15 設定頁面 ========== -->
+      <div class="flex flex-col overflow-hidden h-full bg-white border border-gray-200 rounded-lg shadow-md auth-only page" id="page15">
+        <div class="flex items-center justify-between shrink-0 px-6 py-4 bg-white border-b border-gray-200">
+          <h3 class="flex items-center gap-3 font-bold text-xl text-gray-800"><span class="w-2 h-6 bg-ms-blue rounded-full"></span>人員設定</h3>
+        </div>
+        <div class="flex flex-col flex-1 overflow-hidden bg-gray-50">
+          <div class="flex-1 overflow-y-auto p-6">
+            <div class="max-w-[1200px] mx-auto" id="settingsContainer"></div>
+          </div>
+        </div>
+      </div>
+      <!-- ========== PAGE16 選項設定 ========== -->
+      <div class="flex flex-col overflow-hidden h-full bg-white border border-gray-200 rounded-lg shadow-md auth-only page" id="page16">
+        <div class="flex items-center justify-between shrink-0 px-6 py-4 bg-white border-b border-gray-200">
+          <h3 class="flex items-center gap-3 font-bold text-xl text-gray-800"><span class="w-2 h-6 bg-ms-blue rounded-full"></span>選項設定</h3>
+        </div>
+        <div class="flex flex-col flex-1 overflow-hidden bg-gray-50">
+          <div class="flex-1 overflow-y-auto p-6">
+            <div class="max-w-[1200px] mx-auto" id="optionSettingsContainer"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- 登入視窗 -->
+    <div class="fixed inset-0 z-[10000] flex hidden items-center justify-center bg-gray-900 bg-opacity-60 backdrop-blur-sm" id="loginModal">
+      <div class="w-96 p-8 bg-white rounded-xl shadow-2xl transition-all transform scale-100">
+        <div class="mb-6 text-center">
+          <div class="flex items-center justify-center w-12 h-12 mx-auto mb-4 text-xl text-white bg-ms-blue rounded-full"><i class="fa-solid fa-lock"></i></div>
+          <h3 class="font-bold text-xl text-gray-800">權限驗證</h3>
+          <p class="mt-1 text-sm text-gray-500">此操作需要登入</p>
+        </div>
+        <div class="mb-4">
+          <label class="block mb-2 font-semibold text-sm text-gray-700">帳號</label>
+          <input class="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:border-ms-blue focus:ring-2 focus:ring-ms-blue" id="loginUser" placeholder="請輸入帳號" type="text" onkeyup="if (event.key === 'Enter') checkLogin();" />
+        </div>
+        <div class="mb-6">
+          <label class="block mb-2 font-semibold text-sm text-gray-700">密碼</label>
+          <input class="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:border-ms-blue focus:ring-2 focus:ring-ms-blue" id="loginPass" onkeyup="if (event.key === 'Enter') checkLogin();" placeholder="請輸入密碼" type="password" />
+        </div>
+        <div class="flex gap-3">
+          <button class="flex-1 py-2 font-bold text-gray-700 bg-gray-200 rounded-md transition-colors hover:bg-gray-300" onclick="closeLogin()">取消</button>
+          <button class="flex-1 py-2 shadow-md btn-primary" onclick="checkLogin()">登入</button>
+        </div>
+      </div>
+    </div>
+    <div class="fixed inset-0 z-[10002] flex hidden items-center justify-center bg-gray-900 bg-opacity-60 backdrop-blur-sm" id="editMaintainerModal">
+      <div class="w-96 p-6 bg-white rounded-xl shadow-2xl transition-all transform scale-100">
+        <div class="mb-6 text-center">
+          <div class="flex items-center justify-center w-12 h-12 mx-auto mb-3 text-xl text-ms-blue bg-blue-100 rounded-full">
+            <i class="fa-solid fa-user-pen"></i>
+          </div>
+          <h3 class="font-bold text-xl text-gray-800">編輯人員資料</h3>
+        </div>
+        <input id="editOriginalName" type="hidden" />
+        <div class="mb-4">
+          <label class="block mb-2 font-semibold text-sm text-gray-700">人員姓名</label>
+          <input class="w-full px-4 py-2 text-gray-500 bg-gray-50 border border-gray-300 rounded-lg outline-none cursor-not-allowed focus:border-ms-blue focus:ring-2 focus:ring-ms-blue" id="editNameInput" readonly title="姓名不可修改以避免歷史資料連結錯誤" type="text" />
+          <p class="mt-1 text-xs text-gray-400">* 姓名不可修改</p>
+        </div>
+        <div class="mb-6">
+          <label class="block mb-2 font-semibold text-sm text-gray-700">工號 (登入帳號)</label>
+          <input class="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:border-ms-blue focus:ring-2 focus:ring-ms-blue" id="editIdInput" placeholder="請輸入工號" type="text" />
+        </div>
+        <div class="flex gap-3">
+          <button class="flex-1 py-2 font-bold text-gray-700 bg-gray-200 rounded-md transition-colors hover:bg-gray-300" onclick="document.getElementById('editMaintainerModal').classList.add('hidden')">取消</button>
+          <button class="flex-1 py-2 shadow-md btn-primary" onclick="saveMaintainerEdit()">儲存變更</button>
+        </div>
+      </div>
+    </div>
+    <datalist id="listApplicants"></datalist>
+    <datalist id="listCreators"></datalist>
+    <div class="fixed top-4 left-1/2 -translate-x-1/2 z-[10001] flex flex-col items-center gap-3" id="toastContainer"></div>
+    <!-- 浮動未儲存通知徽章 -->
+    <div class="fixed right-8 bottom-8 z-50 hidden" id="unsavedFab">
+      <div class="flex items-center gap-2 px-4 py-2 text-sm font-medium text-amber-800 bg-amber-100 border border-amber-300 rounded-lg shadow-md">
+        <i class="fa-solid fa-circle-exclamation text-amber-500"></i>
+        <span id="unsavedBadgeText"></span>
+      </div>
+    </div>
+    <!-- ========== 搜尋語法提示（動態） ========== -->
+    <div class="search-help-modal" id="searchHelpModal" onclick="if(event.target===this)this.classList.remove('show')">
+      <div class="search-help-content" style="max-width:580px;">
+        <div class="search-help-header">
+          <h3 id="searchHelpTitle"><i class="fa-solid fa-magnifying-glass"></i> 搜尋語法說明</h3>
+          <div class="search-help-close" onclick="document.getElementById('searchHelpModal').classList.remove('show')">
+            <i class="fa-solid fa-xmark"></i>
+          </div>
+        </div>
+        <div class="search-help-body" id="searchHelpBody"></div>
+      </div>
+    </div>
+    <!-- ========== 未停用取替代 ECN 檢查 ========== -->
+    <div class="search-help-modal" id="undisabledEcnModal" onclick="if(event.target===this)this.classList.remove('show')">
+      <div class="search-help-content" style="max-width:620px;">
+        <div class="search-help-header">
+          <h3><i class="fa-solid fa-circle-exclamation text-red-500"></i> 未停用取替代 ECN</h3>
+          <div class="search-help-close" onclick="document.getElementById('undisabledEcnModal').classList.remove('show')">
+            <i class="fa-solid fa-xmark"></i>
+          </div>
+        </div>
+        <div class="search-help-body" id="undisabledEcnBody"></div>
+      </div>
+    </div>
+    <!-- ========== 計算說明 ========== -->
+    <div class="search-help-modal" id="ecrEcnCalcHelpModal" onclick="if(event.target===this)this.classList.remove('show')">
+      <div class="search-help-content" style="max-width:580px;">
+        <div class="search-help-header">
+          <h3><i class="fa-solid fa-book"></i> ECR/ECN 計算說明</h3>
+          <div class="search-help-close" onclick="document.getElementById('ecrEcnCalcHelpModal').classList.remove('show')"><i class="fa-solid fa-xmark"></i></div>
+        </div>
+        <div class="search-help-body">
+          <div class="search-help-section">
+            <h4><i class="fa-solid fa-clock text-orange-500"></i> ECR 天數計算</h4>
+            <table class="search-help-table">
+              <tr><td>ECR 申請日 <i class="fa-solid fa-right-long text-gray-400"></i> 第七關【協辦單位】同意日（工作天，含補班日）</td></tr>
+            </table>
+          </div>
+          <div class="search-help-section">
+            <h4><i class="fa-solid fa-clock text-blue-500"></i> ECN 天數計算</h4>
+            <table class="search-help-table">
+              <tr><td>ECN 申請日 <i class="fa-solid fa-right-long text-gray-400"></i> 第二關【協辦單位】同意日（工作天，含補班日）</td></tr>
+            </table>
+          </div>
+          <div class="search-help-section">
+            <h4><i class="fa-solid fa-tags text-emerald-500"></i> ECR 狀態說明</h4>
+            <table class="search-help-table">
+              <tr><td style="white-space:nowrap;"><span class="inline-block w-2 h-2 bg-orange-600 rounded-full mr-1"></span>同意結束</td><td>第七關【協辦單位】已同意，ECR 流程完成</td></tr>
+              <tr><td style="white-space:nowrap;"><span class="inline-block w-2 h-2 bg-amber-400 rounded-full mr-1"></span>進行中</td><td>ECR 尚在簽核流程中，尚未結案</td></tr>
+              <tr><td style="white-space:nowrap;"><span class="inline-block w-2 h-2 bg-red-400 rounded-full mr-1"></span>駁回/撤回</td><td>ECR 被駁回或申請人主動撤回</td></tr>
+            </table>
+          </div>
+          <div class="search-help-section">
+            <h4><i class="fa-solid fa-tags text-blue-500"></i> ECN 狀態說明</h4>
+            <table class="search-help-table">
+              <tr><td style="white-space:nowrap;"><span class="inline-block w-2 h-2 bg-indigo-600 rounded-full mr-1"></span>同意結束</td><td>ECN 流程全部完成</td></tr>
+              <tr><td style="white-space:nowrap;"><span class="inline-block w-2 h-2 bg-sky-400 rounded-full mr-1"></span>已執行</td><td>第二關【協辦單位】已同意，但後續關卡尚未完成</td></tr>
+              <tr><td style="white-space:nowrap;"><span class="inline-block w-2 h-2 bg-gray-300 rounded-full mr-1"></span>進行中</td><td>ECN 尚在簽核中，尚未簽到第二關或第二關尚未簽核</td></tr>
+              <tr><td style="white-space:nowrap;"><span class="inline-block w-2 h-2 bg-red-400 rounded-full mr-1"></span>駁回/撤回</td><td>ECN 被駁回或申請人主動撤回</td></tr>
+            </table>
+          </div>
+          <div class="search-help-section">
+            <h4><i class="fa-solid fa-chart-line text-violet-500"></i> 趨勢指標</h4>
+            <table class="search-help-table">
+              <tr><td style="white-space:nowrap;">總平均</td><td>所有有結案日/二關同意日的單據平均工作天</td></tr>
+              <tr><td style="white-space:nowrap;">本周均</td><td>本週一～日完成的單據平均，與上週比較</td></tr>
+              <tr><td style="white-space:nowrap;">本月均</td><td>本月1日～月底完成的單據平均，與上月比較</td></tr>
+              <tr><td style="white-space:nowrap;"><i class="fa-solid fa-arrow-down text-emerald-600"></i> 綠色</td><td>天數下降（處理變快）</td></tr>
+              <tr><td style="white-space:nowrap;"><i class="fa-solid fa-arrow-up text-red-500"></i> 紅色</td><td>天數上升（處理變慢）</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- ECN 匯入說明 -->
+    <div class="search-help-modal" id="ecnImportGuideModal" onclick="if(event.target===this)this.classList.remove('show')">
+      <div class="search-help-content" style="max-width:580px;">
+        <div class="search-help-header">
+          <h3>ECN 詳細清單 匯入說明</h3>
+          <div class="search-help-close" onclick="document.getElementById('ecnImportGuideModal').classList.remove('show')"><i class="fa-solid fa-xmark"></i></div>
+        </div>
+        <div class="search-help-body">
+          <div style="margin:0 0 12px 0;padding:10px 12px;background:#fff7ed;border-left:4px solid #f59e0b;border-radius:4px;">
+            <div style="margin-bottom:4px;font-size:13px;font-weight:bold;color:#b45309;"><i class="fa-solid fa-triangle-exclamation"></i> 系統提醒</div>
+            <div style="font-size:12px;line-height:1.7;color:#78350f;">本頁資料已直接介接 BPM 新人類資料庫，每次切換頁面或按右上角重新整理會自動取得最新內容。手動匯入功能僅作為 API 異常時的暫時備援，平時請勿使用，以免覆蓋自動同步的即時資料。</div>
+          </div>
+          <div class="search-help-section">
+            <h4><i class="fa-solid fa-shoe-prints text-blue-500"></i> 操作步驟</h4>
+            <table class="search-help-table">
+              <tr><td><b style="color:#0078d4;">1.</b> 進入 BPM 系統 <code style="padding:2px 6px;border-radius:4px;background:#f3f4f6;font-size:11px;">http://192.168.2.26</code> 並登入</td></tr>
+              <tr><td><b style="color:#0078d4;">2.</b> 使用 BPM 資料匯出小幫手，等待完成後自動下載 JSON 檔案
+              <tr><td><b style="color:#0078d4;">3.</b> 回到小幫手，在對應頁面點擊「匯入」</td></tr>
+            </table>
+          </div>
+          <div class="search-help-section">
+            <h4><i class="fa-solid fa-box-open text-green-500"></i> 包含資料</h4>
+            <table class="search-help-table">
+              <tr><td><b style="color:#0078d4;">📋 ECN 詳細清單</b></td></tr>
+              <tr><td style="padding-left:20px;color:#555;">ECN 單號、ECR 單號、表單狀態、申請人、變更品號、協辦人、需求等級、變更範圍、ECN 申請日、【一】簽核日、【二】簽核日</td></tr>
+              <tr><td><b style="color:#ff9800;">📋 新人類轉單（ECR + ECN）</b></td></tr>
+              <tr><td style="padding-left:20px;color:#555;">表單編號、申請部門、申請人、簽核步驟、送達日、簽核日、簽核結果、執行人(僅EC人員)</td></tr>
+            </table>
+          </div>
+          <div class="search-help-section">
+            <h4><i class="fa-solid fa-circle-info text-amber-500"></i> 注意事項</h4>
+            <table class="search-help-table">
+              <tr><td>⚠️ 請確保已登入 BPM 且在同一個瀏覽器分頁執行</td></tr>
+              <tr><td>🔄 重複匯入自動更新，手動維護的欄位不會被覆蓋</td></tr>
+              <tr><td>💾 匯入後記得按「儲存」同步到雲端</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- PCB 匯入說明 -->
+    <div class="search-help-modal" id="pcbImportGuideModal" onclick="if(event.target===this)this.classList.remove('show')">
+      <div class="search-help-content" style="max-width:580px;">
+        <div class="search-help-header">
+          <h3>PCB 詳細清單 匯入說明</h3>
+          <div class="search-help-close" onclick="document.getElementById('pcbImportGuideModal').classList.remove('show')"><i class="fa-solid fa-xmark"></i></div>
+        </div>
+        <div class="search-help-body">
+          <div style="margin:0 0 12px 0;padding:10px 12px;background:#fff7ed;border-left:4px solid #f59e0b;border-radius:4px;">
+            <div style="margin-bottom:4px;font-size:13px;font-weight:bold;color:#b45309;"><i class="fa-solid fa-triangle-exclamation"></i> 系統提醒</div>
+            <div style="font-size:12px;line-height:1.7;color:#78350f;">本頁資料已直接介接 BPM 新人類資料庫，每次切換頁面或按右上角重新整理會自動取得最新內容。手動匯入功能僅作為 API 異常時的暫時備援，平時請勿使用，以免覆蓋自動同步的即時資料。</div>
+          </div>
+          <div class="search-help-section">
+            <h4><i class="fa-solid fa-shoe-prints text-blue-500"></i> 操作步驟</h4>
+            <table class="search-help-table">
+              <tr><td><b style="color:#0078d4;">1.</b> 進入 BPM 系統 <code style="padding:2px 6px;border-radius:4px;background:#f3f4f6;font-size:11px;">http://192.168.2.26</code> 並登入</td></tr>
+              <tr><td><b style="color:#0078d4;">2.</b> 使用 BPM 資料匯出小幫手，等待完成後自動下載 JSON 檔案
+              <tr><td><b style="color:#0078d4;">3.</b> 回到小幫手，在對應頁面點擊「匯入」</td></tr>
+            </table>
+          </div>
+          <div class="search-help-section">
+            <h4><i class="fa-solid fa-box-open text-green-500"></i> 包含資料</h4>
+            <table class="search-help-table">
+              <tr><td><b style="color:#66bb6a;">📋 PCB 詳細清單</b></td></tr>
+              <tr><td style="padding-left:20px;color:#555;">PCB 單號、PCB 料號、表單狀態、申請人、需求等級</td></tr>
+              <tr><td><b style="color:#0078d4;">📋 六個關卡簽核紀錄</b></td></tr>
+              <tr><td style="padding-left:20px;color:#555;">【二】部門主管、【三】工程中心、【七】Layout、【八】工程中心、【十五】EC 工程中心、【十八】EC 工程中心</td></tr>
+              <tr><td style="padding-left:20px;color:#555;">各關卡含：簽核人、簽核時間</td></tr>
+            </table>
+          </div>
+          <div class="search-help-section">
+            <h4><i class="fa-solid fa-circle-info text-amber-500"></i> 注意事項</h4>
+            <table class="search-help-table">
+              <tr><td>⚠️ 請確保已登入 BPM 且在同一個瀏覽器分頁執行</td></tr>
+              <tr><td>🔄 重複匯入自動更新，手動維護的欄位不會被覆蓋</td></tr>
+              <tr><td>💾 匯入後記得按「儲存」同步到雲端</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- ECR/ECN追蹤 匯入說明 -->
+    <div class="search-help-modal" id="ecrEcnConsoleGuideModal" onclick="if(event.target===this)this.classList.remove('show')">
+      <div class="search-help-content" style="max-width:580px;">
+        <div class="search-help-header">
+          <h3>ECR/ECN 追蹤報告 匯入說明</h3>
+          <div class="search-help-close" onclick="document.getElementById('ecrEcnConsoleGuideModal').classList.remove('show')"><i class="fa-solid fa-xmark"></i></div>
+        </div>
+        <div class="search-help-body">
+          <div style="margin:0 0 12px 0;padding:10px 12px;background:#fff7ed;border-left:4px solid #f59e0b;border-radius:4px;">
+            <div style="margin-bottom:4px;font-size:13px;font-weight:bold;color:#b45309;"><i class="fa-solid fa-triangle-exclamation"></i> 系統提醒</div>
+            <div style="font-size:12px;line-height:1.7;color:#78350f;">本頁資料已直接介接 BPM 新人類資料庫，每次切換頁面或按右上角重新整理會自動取得最新內容。手動匯入功能僅作為 API 異常時的暫時備援，平時請勿使用，以免覆蓋自動同步的即時資料。</div>
+          </div>
+          <div class="search-help-section">
+            <h4><i class="fa-solid fa-shoe-prints text-blue-500"></i> 操作步驟</h4>
+            <table class="search-help-table">
+              <tr><td><b style="color:#0078d4;">1.</b> 進入 BPM 系統 <code style="padding:2px 6px;border-radius:4px;background:#f3f4f6;font-size:11px;">http://192.168.2.26</code> 並登入</td></tr>
+              <tr><td><b style="color:#0078d4;">2.</b> 使用 BPM 資料匯出小幫手，等待完成後自動下載 JSON 檔案
+              <tr><td><b style="color:#0078d4;">3.</b> 回到小幫手，在對應頁面點擊「匯入」</td></tr>
+            </table>
+          </div>
+          <div class="search-help-section">
+            <h4><i class="fa-solid fa-box-open text-green-500"></i> 包含資料</h4>
+            <table class="search-help-table">
+              <tr><td><b style="color:#ff9800;">📋 ECR 資料</b></td></tr>
+              <tr><td style="padding-left:20px;color:#555;">ECR 單號、申請人、申請日期、表單狀態、目前簽核關卡/簽核人、【七】結案日、需求等級、變更分類</td></tr>
+              <tr><td><b style="color:#0078d4;">📋 ECN 資料</b></td></tr>
+              <tr><td style="padding-left:20px;color:#555;">ECN 單號、申請人、申請日期、表單狀態、目前簽核關卡/簽核人、【二】結案日、需求等級</td></tr>
+              <tr><td><b style="color:#9c27b0;">📋 ECR ↔ ECN 對應關係</b></td></tr>
+              <tr><td style="padding-left:20px;color:#555;">每筆 ECR 自動關聯對應的 ECN 單號；ECR 已同意結束但無 ECN 時顯示「(無ECN)」，ECR 進行中顯示「(ECR尚未結案)」，若 <code>ECRToECNChangeProceed=否</code>（不需開 ECN）顯示「不執行ECN」，撤回/駁回則不顯示</td></tr>
+              <tr><td style="padding-left:20px;color:#888;font-size:11px;">※ 進行中表單會即時查詢目前簽核關卡，已結案表單顯示最後簽核關卡。耗時天數由小幫手自動計算</td></tr>
+            </table>
+          </div>
+          <div class="search-help-section">
+            <h4><i class="fa-solid fa-circle-info text-amber-500"></i> 注意事項</h4>
+            <table class="search-help-table">
+              <tr><td>⚠️ 請確保已登入 BPM 且在同一個瀏覽器分頁執行</td></tr>
+              <tr><td>💾 匯入後記得按「儲存」將資料同步到雲端</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="shrink-0 py-1.5 text-center text-[10px] text-gray-300 border-gray-100 select-none">© ORing / Amanda Wang</div>
+    <script src="./app.js"></script>
+  </body>
+</html>
