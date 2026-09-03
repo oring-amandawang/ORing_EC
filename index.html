@@ -1617,7 +1617,7 @@
     </div>
     <!-- P20 月報摘要 -->
     <div class="search-help-modal" id="monthlyReportModal" onclick="if(event.target===this)this.classList.remove('show')">
-      <div class="search-help-content" style="max-width:780px;max-height:90vh;display:flex;flex-direction:column;">
+      <div class="search-help-content" style="max-width:780px;">
         <div class="search-help-header">
           <h3><i class="fa-solid fa-screen-users"></i> ECR/ECN 月報摘要
             <select id="monthlyReportMonthSelect" onchange="renderMonthlyReport()" style="margin-left:12px;padding:2px 6px;border:1px solid #cbd5e1;border-radius:4px;font-size:13px;"></select>
@@ -1625,7 +1625,7 @@
           </h3>
           <div class="search-help-close" onclick="document.getElementById('monthlyReportModal').classList.remove('show')"><i class="fa-solid fa-xmark"></i></div>
         </div>
-        <div class="search-help-body" style="overflow-y:auto;flex:1;">
+        <div class="search-help-body">
           <!-- A 區：精簡摘要 -->
           <div class="search-help-section">
             <div style="display:flex;align-items:baseline;gap:10px;">
