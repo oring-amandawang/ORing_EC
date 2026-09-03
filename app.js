@@ -1700,6 +1700,50 @@
         },
 
 
+        /* 年→月連動下拉。ymList 吃 'YYYY-MM' / 'YYYY/MM'（可含 null）
+           opts.sep 回傳分隔符（預設 '-'）；opts.defaultYM 強制預設，未給則保留使用者目前選擇 */
+        _ymMaps: {},
+        initYearMonthSelect(yearId, monthId, ymList, opts = {}) {
+          const sep = opts.sep || "-";
+          const map = {};
+          for (const ym of ymList) {
+            const mt = /^(\d{4})[-\/](\d{1,2})/.exec(ym || "");
+            if (!mt) continue;
+            (map[mt[1]] = map[mt[1]] || new Set()).add(mt[2].padStart(2, "0"));
+          }
+          for (const y in map) map[y] = [...map[y]].sort().reverse();
+          this._ymMaps[yearId] = { map, monthId, sep };
+          const years = Object.keys(map);
+          const ySel = document.getElementById(yearId), mSel = document.getElementById(monthId);
+          if (!years.length || !ySel || !mSel) return "";
+          let preferM = mSel.value;
+          this.initYearSelect(yearId, years, "年", false); // 已初始化過的選單會保留原年份
+          if (opts.defaultYM) {
+            const d = /^(\d{4})[-\/](\d{1,2})/.exec(opts.defaultYM);
+            if (d && map[d[1]]) { ySel.value = d[1]; preferM = d[2].padStart(2, "0"); }
+          }
+          return this.syncMonthToYear(yearId, preferM);
+        },
+
+        /* 年份變更後重填月份；preferMonth 存在就選它，否則該年最新月。回傳 YYYY?MM */
+        syncMonthToYear(yearId, preferMonth) {
+          const cfg = this._ymMaps[yearId];
+          if (!cfg) return "";
+          const ySel = document.getElementById(yearId), mSel = document.getElementById(cfg.monthId);
+          const months = cfg.map[ySel.value] || [];
+          mSel.innerHTML = months.map((m) => `<option value="${m}">${parseInt(m)} 月</option>`).join("");
+          mSel.value = preferMonth && months.includes(preferMonth) ? preferMonth : months[0] || "";
+          return mSel.value ? `${ySel.value}${cfg.sep}${mSel.value}` : "";
+        },
+
+        /* 目前選到的 YYYY?MM（分隔符依 init 時的 sep） */
+        getYearMonthValue(yearId) {
+          const cfg = this._ymMaps[yearId];
+          if (!cfg) return "";
+          const y = document.getElementById(yearId)?.value, m = document.getElementById(cfg.monthId)?.value;
+          return y && m ? `${y}${cfg.sep}${m}` : "";
+        },
+
         /* Textarea 自動調整 */
         _fieldSizingSupported: null,
         autoResize(e) {
@@ -4500,7 +4544,7 @@
 
       /* ECN 報表渲染 */
       function renderCharts() {
-        const m = document.getElementById("monthSelect").value;
+        const m = Utils.getYearMonthValue("monthYearSelect");
         if (m && m.length >= 4) {
           const selectedYear = m.substring(0, 4);
           const yearSelect = document.getElementById("ecnYearlyTableSelect");
@@ -4670,12 +4714,15 @@
           }
         }
       }
+      // e.month 為 'YYYY/MM'，sep 必須用 '/'，renderCharts 的 r.month === m 才對得上
       function updateMonthSelect() {
-        let e = [...new Set(ecnData.map((e) => e.month))]
-          .filter((e) => "未知" !== e)
-          .sort()
-          .reverse();
-        ((document.getElementById("monthSelect").innerHTML = e.map((e) => `<option value="${e}">${e} 月</option>`).join("")), e.length && renderCharts());
+        const yms = ecnData.map((e) => e.month).filter((m) => m && m !== "未知");
+        const ym = Utils.initYearMonthSelect("monthYearSelect", "monthSelect", yms, { sep: "/" });
+        if (ym) renderCharts();
+      }
+      function onEcnMonthYearChange() {
+        Utils.syncMonthToYear("monthYearSelect");
+        renderCharts();
       }
 
       /* 轉單功能 */
@@ -7085,57 +7132,23 @@
         if (!arr.length) return null;
         return arr.reduce((a,b)=>a+b,0) / arr.length;
       }
-      function _mrFmt(n, digits) {
-        if (n === null || n === undefined || isNaN(n)) return 'N/A';
-        return Number(n).toFixed(digits === undefined ? 2 : digits);
-      }
       function _mrParseYM(ym) {
         const [y, m] = ym.split('-').map(Number);
         return { y, m };
       }
+      // 'YYYY-MM' → 沿用 P20 既有 getMonthRange（m 為 0-based）
       function _mrMonthRange(ym) {
         const { y, m } = _mrParseYM(ym);
-        return { start: new Date(y, m-1, 1, 0,0,0,0), end: new Date(y, m, 0, 23,59,59,999) };
+        return getMonthRange(y, m - 1);
       }
+      // 'YYYY-MM' 一律用 DateUtils.normalizeMonth 產生
       function _mrPrevMonth(ym) {
         const { y, m } = _mrParseYM(ym);
-        const d = new Date(y, m-2, 1);
-        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+        return DateUtils.normalizeMonth(new Date(y, m - 2, 1));
       }
-      function _mrNow() {
-        const n = new Date();
-        return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;
-      }
-      function _mrMonthDiff(fromYM, toYM) {
-        const a = _mrParseYM(fromYM), b = _mrParseYM(toYM);
-        return (b.y - a.y) * 12 + (b.m - a.m);
-      }
-      function _mrCloseYM(dateStr) {
-        const d = DateUtils.parse(dateStr);
-        if (!d) return null;
-        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-      }
-
-      /* 建立月份下拉：抓所有出現過的結案月份 + 本月 */
-      function _mrBuildOptions() {
-        const set = new Set();
-        for (const r of ecrEcnData) {
-          const a = _mrCloseYM(r.ecrStep7Time); if (a) set.add(a);
-          const b = _mrCloseYM(r.ecnStep2Time); if (b) set.add(b);
-        }
-        set.add(_mrNow());
-        return [...set].sort().reverse().map(ym => {
-          const [y, m] = ym.split('-');
-          return { value: ym, label: `${y} 年 ${parseInt(m)} 月` };
-        });
-      }
-
-      /* 取「上一個完整月」；若當月為 1 月則回上一年 12 月 */
-      function _mrDefaultMonth() {
-        const now = new Date();
-        const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-      }
+      function _mrNow() { return DateUtils.normalizeMonth(new Date()); }
+      /* 上一個完整月 */
+      function _mrDefaultMonth() { return _mrPrevMonth(_mrNow()); }
 
       /* 收集去重後的 ECR / ECN 清單（不含 placeholder） */
       function _mrCollectUnique() {
@@ -7340,12 +7353,13 @@
               <td style="padding:3px 8px;border-bottom:1px solid #f1f5f9;text-align:right;">${Math.round(b.avg)} 天${icon}</td>
             </tr>`;
           }).join('');
-          return `<table style="width:100%;font-size:12px;margin-top:4px;">
+          // table-layout:fixed + 固定欄寬，讓四張表的欄位對齊
+          return `<table style="width:100%;font-size:12px;margin-top:4px;table-layout:fixed;">
             <thead><tr style="background:#f8fafc;color:#64748b;">
-              <th style="padding:4px 8px;text-align:left;">分組</th>
-              <th style="padding:4px 8px;text-align:right;">筆數</th>
-              <th style="padding:4px 8px;text-align:right;">占比</th>
-              <th style="padding:4px 8px;text-align:right;">均天</th>
+              <th style="padding:4px 8px;text-align:left;width:40%;">分組</th>
+              <th style="padding:4px 8px;text-align:right;width:20%;">筆數</th>
+              <th style="padding:4px 8px;text-align:right;width:20%;">占比</th>
+              <th style="padding:4px 8px;text-align:right;width:20%;">均天</th>
             </tr></thead><tbody>${rows}</tbody></table>`;
         };
         // 本月/上月一句話描述（用於 hasMark 為 false 時的說明）
@@ -7367,7 +7381,7 @@
 
         const renderSection = (title, headerClass, sec, thisAvg, prevAvg, prevSec) => {
           if (!sec) return `<div style="margin-bottom:16px;">
-            <div class="${headerClass}" style="padding:6px 10px;border-radius:4px;font-weight:bold;">═ ${title} ${y}-${String(m).padStart(2,'0')} 本月無結案 ═</div>
+            <div class="${headerClass}" style="padding:6px 10px;border-radius:4px;font-weight:bold;">═ ${title} ${y} 年 ${m} 月 本月無結案 ═</div>
           </div>`;
           // 差距四捨五入 = 0 視同無方向
           const rawDiff = (thisAvg !== null && prevAvg !== null) ? (thisAvg - prevAvg) : null;
@@ -7387,7 +7401,7 @@
           }
           const legendHtml = legend ? `<div style="margin-top:6px;color:#64748b;font-size:11px;">${legend}</div>` : '';
           return `<div style="margin-bottom:20px;">
-            <div class="${headerClass}" style="padding:6px 10px;border-radius:4px;font-weight:bold;">═ ${title} ${y}-${String(m).padStart(2,'0')} 結案 ${sec.count} 筆，整體均天 ${Math.round(sec.avg)} 天 ═</div>
+            <div class="${headerClass}" style="padding:6px 10px;border-radius:4px;font-weight:bold;">═ ${title} ${y} 年 ${m} 月 結案 ${sec.count} 筆，整體均天 ${Math.round(sec.avg)} 天 ═</div>
             <div style="padding:6px 4px;">
               <div style="margin-top:8px;"><b style="color:#475569;"><i class="fa-solid fa-caret-right text-slate-400"></i> 依申請年份</b>${renderGroups(sec.byYear, sec.avg, sec.count, monthDiff)}</div>
               <div style="margin-top:8px;"><b style="color:#475569;"><i class="fa-solid fa-caret-right text-slate-400"></i> 依 ${y} 年申請月份</b>${renderGroups(sec.byMonth, sec.avg, sec.count, monthDiff)}</div>
@@ -7427,11 +7441,11 @@
           return `上月 ${prevSec.count}筆均${Math.round(prevSec.avg)}天${detail}`;
         };
         const sectionText = (title, sec, thisAvg, prevAvg, prevSec) => {
-          if (!sec) return `═ ${title} ${y}-${String(m).padStart(2,'0')} 本月無結案 ═`;
+          if (!sec) return `═ ${title} ${y} 年 ${m} 月 本月無結案 ═`;
           const rawDiff = (thisAvg !== null && prevAvg !== null) ? (thisAvg - prevAvg) : null;
           const monthDiff = (rawDiff !== null && Math.round(rawDiff) !== 0) ? rawDiff : null;
           const lines = [
-            `═ ${title} ${y}-${String(m).padStart(2,'0')} 結案 ${sec.count} 筆，整體均天 ${Math.round(sec.avg)} 天 ═`,
+            `═ ${title} ${y} 年 ${m} 月 結案 ${sec.count} 筆，整體均天 ${Math.round(sec.avg)} 天 ═`,
             `依申請年份：`,
             groupLines(sec.byYear, sec.avg, sec.count, monthDiff),
             `依 ${y} 年申請月份：`,
@@ -7458,18 +7472,25 @@
       /* 入口：開啟 modal */
       function showMonthlyReportModal() {
         if (!ecrEcnData.length) return ToastModule.show('尚無資料，請先同步 BPM API', 'warning');
-        const sel = document.getElementById('monthlyReportMonthSelect');
-        const opts = _mrBuildOptions();
-        sel.innerHTML = opts.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
-        const def = _mrDefaultMonth();
-        if (opts.some(o => o.value === def)) sel.value = def;
+        const yms = [_mrNow()];
+        for (const r of ecrEcnData) {
+          yms.push(DateUtils.normalizeMonth(r.ecrStep7Time), DateUtils.normalizeMonth(r.ecnStep2Time));
+        }
+        // 每次開啟都回到上一個完整月
+        Utils.initYearMonthSelect('monthlyReportYearSelect', 'monthlyReportMonthSelect', yms, { defaultYM: _mrDefaultMonth() });
         renderMonthlyReport();
         document.getElementById('monthlyReportModal').classList.add('show');
       }
 
+      /* 年份切換 → 重填月份 → 重算 */
+      function onMonthlyReportYearChange() {
+        Utils.syncMonthToYear('monthlyReportYearSelect');
+        renderMonthlyReport();
+      }
+
       /* 重新渲染（月份切換時） */
       function renderMonthlyReport() {
-        const ym = document.getElementById('monthlyReportMonthSelect').value;
+        const ym = Utils.getYearMonthValue('monthlyReportYearSelect');
         if (!ym) return;
         const warn = document.getElementById('monthlyReportWarning');
         if (ym === _mrNow()) warn.style.display = ''; else warn.style.display = 'none';
