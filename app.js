@@ -7273,16 +7273,13 @@
           if (!sec || thisAvg === null) return null;
           if (prevAvg === null) {
             const head = `${label}本月均天${Math.round(thisAvg)}天（上月無結案可比較）`;
-            const thisTop = _mrTopImpact(sec.candidates, thisAvg, sec.count, 3, 5);
-            if (!thisTop.length) return { text: head, html: esc(head) };
-            const cause = `本月因${fmtParts(thisTop)}`;
-            return {
-              text: `${head}，${cause}`,
-              html: `${esc(head)}，${MARK_OPEN}${esc(cause)}${MARK_CLOSE}`,
-            };
+            return { text: head, html: esc(head) };
           }
           const diff = Math.round(thisAvg - prevAvg);
-          if (diff === 0) return null;
+          if (diff === 0) {
+            const head = `${label}本月與上月均天相同（${Math.round(thisAvg)}天）`;
+            return { text: head, html: esc(head) };
+          }
           const up = diff > 0;
           const head = `${label}本月比上月${up?'上升':'下降'}${Math.abs(diff)}天`;
           const thisTop = _mrTopImpact(sec.candidates, thisAvg, sec.count, 3, 5, up?'pos':'neg');
@@ -7351,7 +7348,24 @@
               <th style="padding:4px 8px;text-align:right;">均天</th>
             </tr></thead><tbody>${rows}</tbody></table>`;
         };
-        const renderSection = (title, headerClass, sec, thisAvg, prevAvg) => {
+        // 本月/上月一句話描述（用於 hasMark 為 false 時的說明）
+        const descThis = (sec) => {
+          if (!sec) return '本月無結案';
+          const top = sec.byMonth[0] || sec.byYear[0];
+          const detail = (top && top.pct >= 95)
+            ? ` → 全部 ${top.label.replace(/\s/g,'')}申請`
+            : '';
+          return `本月 ${sec.count}筆均${Math.round(sec.avg)}天${detail}`;
+        };
+        const descPrev = (prevSec) => {
+          if (!prevSec) return '上月無結案';
+          const items = [...prevSec.candidates].sort((a,b) => b.count - a.count).slice(0, 3);
+          const parts = items.map(b => `${b.label.replace(/\s/g,'')} ${b.count}筆均${Math.round(b.avg)}天`);
+          const detail = parts.length ? ` → ${parts.join('、')}` : '';
+          return `上月 ${prevSec.count}筆均${Math.round(prevSec.avg)}天${detail}`;
+        };
+
+        const renderSection = (title, headerClass, sec, thisAvg, prevAvg, prevSec) => {
           if (!sec) return `<div style="margin-bottom:16px;">
             <div class="${headerClass}" style="padding:6px 10px;border-radius:4px;font-weight:bold;">═ ${title} ${y}-${String(m).padStart(2,'0')} 本月無結案 ═</div>
           </div>`;
@@ -7360,9 +7374,16 @@
           const monthDiff = (rawDiff !== null && Math.round(rawDiff) !== 0) ? rawDiff : null;
           let legend = '';
           if (monthDiff !== null) {
-            legend = monthDiff > 0
-              ? '<i class="fa-solid fa-arrow-up" style="color:rgb(220 38 38);"></i> = 本月上升的主要來源'
-              : '<i class="fa-solid fa-arrow-down" style="color:rgb(4 120 87);"></i> = 本月下降的主要來源';
+            // 檢查本月內部是否有可標記的分組（同向且 |impact| ≥ 1）
+            const hasMark = [...sec.byYear, ...sec.byMonth].some(b => {
+              const imp = sec.count ? b.count * (b.avg - sec.avg) / sec.count : 0;
+              return Math.abs(imp) >= 1 && (monthDiff > 0 ? imp > 0 : imp < 0);
+            });
+            legend = hasMark
+              ? (monthDiff > 0
+                ? '<i class="fa-solid fa-arrow-up" style="color:rgb(220 38 38);"></i> = 本月上升的主要來源'
+                : '<i class="fa-solid fa-arrow-down" style="color:rgb(4 120 87);"></i> = 本月下降的主要來源')
+              : `<span style="color:#94a3b8;">${Utils.escapeHtml(descThis(sec))}<br>${Utils.escapeHtml(descPrev(prevSec))}</span>`;
           }
           const legendHtml = legend ? `<div style="margin-top:6px;color:#64748b;font-size:11px;">${legend}</div>` : '';
           return `<div style="margin-bottom:20px;">
@@ -7374,8 +7395,8 @@
             </div>
           </div>`;
         };
-        return renderSection('ECR', 'bg-orange-50 text-orange-600', data.ecr.section, data.ecr.thisAvg, data.ecr.prevAvg)
-          + renderSection('ECN', 'bg-blue-50 text-blue-600', data.ecn.section, data.ecn.thisAvg, data.ecn.prevAvg);
+        return renderSection('ECR', 'bg-orange-50 text-orange-600', data.ecr.section, data.ecr.thisAvg, data.ecr.prevAvg, data.ecr.prevSection)
+          + renderSection('ECN', 'bg-blue-50 text-blue-600', data.ecn.section, data.ecn.thisAvg, data.ecn.prevAvg, data.ecn.prevSection);
       }
 
       /* 詳細分析：純文字版（用於複製） */
@@ -7393,7 +7414,19 @@
             return `  ${b.label}：${b.count} 筆（${b.pct}%）均 ${Math.round(b.avg)} 天${arrow}`;
           }).join('\n');
         };
-        const sectionText = (title, sec, thisAvg, prevAvg) => {
+        const descThis = (sec) => {
+          const top = sec.byMonth[0] || sec.byYear[0];
+          const detail = (top && top.pct >= 95) ? ` → 全部 ${top.label.replace(/\s/g,'')}申請` : '';
+          return `本月 ${sec.count}筆均${Math.round(sec.avg)}天${detail}`;
+        };
+        const descPrev = (prevSec) => {
+          if (!prevSec) return '上月無結案';
+          const items = [...prevSec.candidates].sort((a,b) => b.count - a.count).slice(0, 3);
+          const parts = items.map(b => `${b.label.replace(/\s/g,'')} ${b.count}筆均${Math.round(b.avg)}天`);
+          const detail = parts.length ? ` → ${parts.join('、')}` : '';
+          return `上月 ${prevSec.count}筆均${Math.round(prevSec.avg)}天${detail}`;
+        };
+        const sectionText = (title, sec, thisAvg, prevAvg, prevSec) => {
           if (!sec) return `═ ${title} ${y}-${String(m).padStart(2,'0')} 本月無結案 ═`;
           const rawDiff = (thisAvg !== null && prevAvg !== null) ? (thisAvg - prevAvg) : null;
           const monthDiff = (rawDiff !== null && Math.round(rawDiff) !== 0) ? rawDiff : null;
@@ -7405,12 +7438,21 @@
             groupLines(sec.byMonth, sec.avg, sec.count, monthDiff),
           ];
           if (monthDiff !== null) {
-            lines.push(monthDiff > 0 ? '（↑ = 本月上升的主要來源）' : '（↓ = 本月下降的主要來源）');
+            const hasMark = [...sec.byYear, ...sec.byMonth].some(b => {
+              const imp = sec.count ? b.count * (b.avg - sec.avg) / sec.count : 0;
+              return Math.abs(imp) >= 1 && (monthDiff > 0 ? imp > 0 : imp < 0);
+            });
+            if (hasMark) {
+              lines.push(monthDiff > 0 ? '（↑ = 本月上升的主要來源）' : '（↓ = 本月下降的主要來源）');
+            } else {
+              lines.push(descThis(sec));
+              lines.push(descPrev(prevSec));
+            }
           }
           return lines.join('\n');
         };
-        return sectionText('ECR', data.ecr.section, data.ecr.thisAvg, data.ecr.prevAvg)
-          + '\n\n' + sectionText('ECN', data.ecn.section, data.ecn.thisAvg, data.ecn.prevAvg);
+        return sectionText('ECR', data.ecr.section, data.ecr.thisAvg, data.ecr.prevAvg, data.ecr.prevSection)
+          + '\n\n' + sectionText('ECN', data.ecn.section, data.ecn.thisAvg, data.ecn.prevAvg, data.ecn.prevSection);
       }
 
       /* 入口：開啟 modal */
