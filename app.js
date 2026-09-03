@@ -65,6 +65,7 @@
         ecrecn: "ECR/ECN 追蹤",
       };
 
+      // ===== ApiModule =====
       /* BPM API 模組（ECRlist / ECRstep / ECNstep / PCBstep） */
       const ApiModule = (() => {
         const BASE = "http://192.168.2.26:81/BPMPro/";
@@ -121,6 +122,7 @@
         };
       })();
 
+      // ===== StatusModule =====
       /* 表單狀態正規化與表單撤回判斷 */
       const StatusModule = (() => {
         const ALIAS = { "起單人撤回": "表單撤回" };
@@ -135,6 +137,7 @@
         };
       })();
 
+      // ===== StepNameModule =====
       /* ECR/ECN 關卡名稱表 */
       const StepNameModule = (() => {
         const ECR_FULL = {
@@ -211,6 +214,7 @@
         };
       })();
 
+      // ===== ApiAdapter =====
       /* BPM API 資料轉換小幫手格式 */
       const ApiAdapter = (() => {
         const normalizeStatus = StatusModule.normalize;
@@ -459,7 +463,7 @@
             const isRejected1 = !!(apply && (apply.ResultPrompt || "").includes("駁回"));
             const isRejected = !!(collab && (collab.ResultPrompt || "").includes("駁回"));
             const applyTime = ecn.ApplicantDateTime || "";
-            const month = applyTime ? applyTime.substring(0, 7).replace("-", "/") : "";
+            const month = applyTime ? DateUtils.normalizeMonth(applyTime) : "";
             const row = {
               id: ecn.SerialID,
               ecrId: ecn._parentEcr || ecn.ECNECRNo || "",
@@ -660,6 +664,7 @@
         };
       })();
 
+      // ===== OverlayModule =====
       /* API + GIST overlay 合併 */
       const OverlayModule = {
         ECN_FIELDS: ["plmStart", "plmRelease", "complexity", "overdueNote"],
@@ -767,6 +772,7 @@
         },
       };
 
+      // ===== YearlyModule =====
       /* 分年份儲存模組 */
       const YearlyModule = {
         dateFields: {
@@ -973,7 +979,8 @@
         },
       };
 
-      /* 表格欄位拖曳排序模組 (會話內記憶) */
+      // ===== ColumnOrderModule =====
+      /* 表格欄位拖曳排序模組（會話內記憶） */
       const ColumnOrderModule = {
         sessionOrder: {},
         p1Columns: [
@@ -1179,7 +1186,7 @@
           const downloads = await Promise.all(
             truncatedList.map(async ({ name, raw_url }) => {
               try {
-                // 注意：raw_url 走 gist.githubusercontent.com（不經 Worker 代理）
+                // raw_url 走 gist.githubusercontent.com（不經 Worker 代理）
                 // Secret Gist 的 raw_url 本身已包含 hash 授權，不需 Authorization header
                 const res = await fetch(raw_url + "?t=" + new Date().getTime());
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1208,9 +1215,8 @@
       const SYNC_COOLDOWN = 30 * 1000;
       const CACHE_MAX_AGE = 5 * 60 * 1000;
 
-      // ==========================================
-      // 1.1 日期工具模組 (Date Utils Module)
-      // ==========================================
+      // ===== DateUtils =====
+      /* 日期解析、格式化、工作天計算 */
       const DateUtils = (() => {
         const ZH_DATE_REGEX = /^(\d{4})\/(\d{1,2})\/(\d{1,2})\s+(上午|下午)\s+(\d{1,2}):(\d{1,2}):(\d{1,2})/;
 
@@ -1282,7 +1288,7 @@
         /* 月份顯示格式化 */
         function formatMonthDisplay(t, n = false) {
           if (!t) return "";
-          let r = t.split("-");
+          let r = t.split(/[-\/]/); // 容錯：舊 API 快取的 month 可能仍是 'YYYY/MM'
           return 2 === r.length
             ? n
               ? `${r[0]}-${r[1]} 月 `
@@ -1351,9 +1357,8 @@
         };
       })();
 
-      // ==========================================
-      // 1.2 通知模組 (Toast Module)
-      // ==========================================
+      // ===== ToastModule =====
+      /* 右下角吐司通知 */
       const ToastModule = (() => {
         const config = {
           success: { 
@@ -1455,9 +1460,8 @@
         return { show };
       })();
 
-      // ==========================================
-      // 1.3 日期選擇器管理模組 (Flatpickr Manager)
-      // ==========================================
+      // ===== FlatpickrManager =====
+      /* Lazy-init 日期選擇器 */
       const FlatpickrManager = (() => {
         const instances = new Map();
         const lazyCallbacks = new Map();  // 儲存延遲初始化的 callback
@@ -1780,7 +1784,7 @@
 
         formatPartNo(str) {
           if (!str) return "";
-          // \u4f9d\u63db\u884c\u5206\u884c\uff0c\u907f\u514d\u7a7a\u683c\u5206\u8a5e\u62c6\u65b7\u6599\u865f
+          // 依換行分行，避免空格分詞拆斷料
           return String(str)
             .split("\n")
             .map((l) => l.trim())
@@ -2805,7 +2809,7 @@
             } else {
               updateFn(e, t);
             }
-            // 注意：不能重置 e._rawInput = ""，否則同一次交互中 wrapper 若被觸發兩次
+            // 不能重置 e._rawInput = ""，否則同一次交互中 wrapper 若被觸發兩次
             //（全域 change + flatpickr onClose），第二次的 raw 會變空 → 走 else 分支 → 覆蓋掉 "取消"
           });
         },
@@ -4254,6 +4258,8 @@
             for (const r of newEcnData) {
               if (!r.id) continue;
               r.status = StatusModule.normalize(r.status);
+              // month 格式由小幫手自己決定，不信任匯入來源
+              r.month = DateUtils.normalizeMonth(r.applyTime || r.month) || r.month || "";
 
               const ex = c.get(r.id);
               if (ex) {
@@ -4543,12 +4549,13 @@
       }
 
       /* ECN 報表渲染 */
+      let _ecnChartsLastYM = null;
       function renderCharts() {
         const m = Utils.getYearMonthValue("monthYearSelect");
-        if (m && m.length >= 4) {
+        if (m && m.length >= 4 && m !== _ecnChartsLastYM) {
           const selectedYear = m.substring(0, 4);
           const yearSelect = document.getElementById("ecnYearlyTableSelect");
-                    if (yearSelect && yearSelect.value !== selectedYear) {
+          if (yearSelect && yearSelect.value !== selectedYear) {
             const hasYear = [...yearSelect.options].some(opt => opt.value === selectedYear);
             if (hasYear) {
               yearSelect.value = selectedYear;
@@ -4556,6 +4563,7 @@
             }
           }
         }
+        _ecnChartsLastYM = m;
         const data = ecnData.filter((r) => r.month === m);
         if (data.length === 0) {
           document.getElementById("summaryGrid").innerHTML = "";
@@ -4714,10 +4722,9 @@
           }
         }
       }
-      // e.month 為 'YYYY/MM'，sep 必須用 '/'，renderCharts 的 r.month === m 才對得上
       function updateMonthSelect() {
         const yms = ecnData.map((e) => e.month).filter((m) => m && m !== "未知");
-        const ym = Utils.initYearMonthSelect("monthYearSelect", "monthSelect", yms, { sep: "/" });
+        const ym = Utils.initYearMonthSelect("monthYearSelect", "monthSelect", yms);
         if (ym) renderCharts();
       }
       function onEcnMonthYearChange() {
@@ -6563,9 +6570,9 @@
           pcbStore.gpms = [...newGpms, ...manualRows];
           Utils.sortData(pcbStore.gpms, "date", false);
 
-          // 重建年度選單
+          // 重建年度選單（includeAll 須與 renderPCBReport 一致：統計報表不提供「全部年度」）
           const pcbYears = [...new Set(pcbStore.list.map((r) => (r.id || "").match(/-(\d{4})-/)?.[1]).filter(Boolean))].sort().reverse();
-          Utils.initYearSelect("pcbYearSelect", pcbYears, "年", true);
+          Utils.initYearSelect("pcbYearSelect", pcbYears, "年", false);
 
           // 切換到對應頁面才重渲染
           const activePage = document.querySelector(".page.active");
@@ -6820,8 +6827,8 @@
         </div>`;
       }
 
+      /* 趨勢圖月均；compItems 為 [{d: Date, dur: 天數}] */
       function _buildMonthlyAvg(compItems, year) {
-        // compItems: [{d: Date, dur: number}]
         const byMonth = {};
         for (let m = 1; m <= 12; m++) byMonth[m] = [];
         compItems.forEach(i => {
@@ -6840,15 +6847,15 @@
         return { labels, data, counts };
       }
 
+      /* 趨勢圖週均；month 為 1-based */
       function _buildWeeklyAvg(compItems, year, month) {
-        // month: 1-based
         if (!year || !month) return { labels: [], tooltipLabels: [], data: [], counts: [] };
         const y = parseInt(year), m = month - 1;
         const firstDay = new Date(y, m, 1);
         const lastDay = new Date(y, m + 1, 0);
         const weeks = [];
         let wStart = new Date(firstDay);
-        // align to Monday
+        // 一週以週一起算
         const day = wStart.getDay();
         if (day !== 1) wStart.setDate(wStart.getDate() - (day === 0 ? 6 : day - 1));
         while (wStart <= lastDay) {
@@ -6882,7 +6889,6 @@
         const bgTo = 'rgba(255,255,255,0)';
         const selectedMonth = isEcr ? _ecrSelectedMonth : _ecnSelectedMonth;
 
-        // Determine which dataset to show
         const isWeekView = selectedMonth !== null;
         const ds = isWeekView ? weeklyData : monthlyData;
 
@@ -6893,7 +6899,7 @@
           ? `<span class="cursor-pointer hover:text-gray-600" onclick="_resetAreaChart('${type}')"><i class="fa-solid fa-arrow-left mr-1"></i>返回月均</span>`
           : (year ? `${year} 年` : '全年度');
 
-        // Destroy old
+        // 同一 canvas 重繪前必須 destroy，否則 Chart.js 會疊圖
         const chartRef = isEcr ? _ecrAreaChart : _ecnAreaChart;
         if (chartRef) { chartRef.destroy(); }
 
@@ -7125,7 +7131,7 @@
       }
       function renderEcrEcnTable(){renderEcrEcnPage();}
 
-      // === P20 月報摘要 ===
+      // ===== P20 月報摘要 =====
       // 入口：showMonthlyReportModal / renderMonthlyReport / copyMonthlyReportSummary / copyMonthlyReportDetail
       function _mrPct(n, d) { return d ? Math.round(n / d * 100) : 0; }
       function _mrAvg(arr) {
