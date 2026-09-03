@@ -427,6 +427,7 @@
             </label>
             <button class="search-help-btn auth-only" onclick="document.getElementById('ecrEcnConsoleGuideModal').classList.add('show')" title="匯入說明"><i class="fa-solid fa-circle-question"></i></button>
             <button class="search-help-btn" onclick="document.getElementById('ecrEcnCalcHelpModal').classList.add('show')" title="計算說明"><i class="fa-solid fa-book"></i></button>
+            <button class="search-help-btn" onclick="showMonthlyReportModal()" title="產生月報摘要"><i class="fa-solid fa-screen-users"></i></button>
           </div>
         </div>
         <div class="flex-1 overflow-y-auto p-6 bg-gray-50/50">
@@ -1610,6 +1611,36 @@
               <tr><td style="white-space:nowrap;"><i class="fa-solid fa-arrow-down text-emerald-600"></i> 綠色</td><td>天數下降（處理變快）</td></tr>
               <tr><td style="white-space:nowrap;"><i class="fa-solid fa-arrow-up text-red-500"></i> 紅色</td><td>天數上升（處理變慢）</td></tr>
             </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- P20 月報摘要 -->
+    <div class="search-help-modal" id="monthlyReportModal" onclick="if(event.target===this)this.classList.remove('show')">
+      <div class="search-help-content" style="max-width:780px;max-height:90vh;display:flex;flex-direction:column;">
+        <div class="search-help-header">
+          <h3><i class="fa-solid fa-screen-users"></i> ECR/ECN 月報摘要
+            <select id="monthlyReportMonthSelect" onchange="renderMonthlyReport()" style="margin-left:12px;padding:2px 6px;border:1px solid #cbd5e1;border-radius:4px;font-size:13px;"></select>
+            <span id="monthlyReportWarning" style="display:none;margin-left:8px;font-size:12px;color:#b45309;"><i class="fa-solid fa-triangle-exclamation"></i> 當月尚未結束，資料為累計中</span>
+          </h3>
+          <div class="search-help-close" onclick="document.getElementById('monthlyReportModal').classList.remove('show')"><i class="fa-solid fa-xmark"></i></div>
+        </div>
+        <div class="search-help-body" style="overflow-y:auto;flex:1;">
+          <!-- A 區：精簡摘要 -->
+          <div class="search-help-section">
+            <div style="display:flex;align-items:baseline;gap:10px;">
+              <h4><i class="fa-solid fa-star text-amber-500"></i> 精簡摘要</h4>
+              <a onclick="copyMonthlyReportSummary()" title="複製精簡摘要" style="color:#94a3b8;font-size:13px;cursor:pointer;" onmouseover="this.style.color='#475569'" onmouseout="this.style.color='#94a3b8'"><i class="fa-solid fa-copy"></i></a>
+            </div>
+            <pre id="monthlyReportSummary" style="white-space:pre-wrap;font-family:'Microsoft JhengHei',sans-serif;font-size:12px;line-height:1.75;margin:0;padding:8px;border:1px solid #e5e7eb;border-radius:4px;color:#1e293b;"></pre>
+          </div>
+          <!-- B 區：詳細分析 -->
+          <div class="search-help-section">
+            <div style="display:flex;align-items:baseline;gap:10px;">
+              <h4><i class="fa-solid fa-chart-simple-horizontal text-emerald-500"></i> 詳細分析</h4>
+              <a onclick="copyMonthlyReportDetail()" title="複製詳細分析" style="color:#94a3b8;font-size:13px;cursor:pointer;" onmouseover="this.style.color='#475569'" onmouseout="this.style.color='#94a3b8'"><i class="fa-solid fa-copy"></i></a>
+            </div>
+            <div id="monthlyReportDetail" style="font-size:12px;line-height:1.7;"></div>
           </div>
         </div>
       </div>

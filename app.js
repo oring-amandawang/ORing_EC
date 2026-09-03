@@ -7077,7 +7077,384 @@
         document.getElementById('ecrEcnCount').textContent=`顯示 ${filtered.length} / ${ecrEcnData.length} 筆`;
       }
       function renderEcrEcnTable(){renderEcrEcnPage();}
- 
+
+      // === P20 月報摘要 ===
+      // 入口：showMonthlyReportModal / renderMonthlyReport / copyMonthlyReportSummary / copyMonthlyReportDetail
+      function _mrPct(n, d) { return d ? Math.round(n / d * 100) : 0; }
+      function _mrAvg(arr) {
+        if (!arr.length) return null;
+        return arr.reduce((a,b)=>a+b,0) / arr.length;
+      }
+      function _mrFmt(n, digits) {
+        if (n === null || n === undefined || isNaN(n)) return 'N/A';
+        return Number(n).toFixed(digits === undefined ? 2 : digits);
+      }
+      function _mrParseYM(ym) {
+        const [y, m] = ym.split('-').map(Number);
+        return { y, m };
+      }
+      function _mrMonthRange(ym) {
+        const { y, m } = _mrParseYM(ym);
+        return { start: new Date(y, m-1, 1, 0,0,0,0), end: new Date(y, m, 0, 23,59,59,999) };
+      }
+      function _mrPrevMonth(ym) {
+        const { y, m } = _mrParseYM(ym);
+        const d = new Date(y, m-2, 1);
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      }
+      function _mrNow() {
+        const n = new Date();
+        return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;
+      }
+      function _mrMonthDiff(fromYM, toYM) {
+        const a = _mrParseYM(fromYM), b = _mrParseYM(toYM);
+        return (b.y - a.y) * 12 + (b.m - a.m);
+      }
+      function _mrCloseYM(dateStr) {
+        const d = DateUtils.parse(dateStr);
+        if (!d) return null;
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      }
+
+      /* 建立月份下拉：抓所有出現過的結案月份 + 本月 */
+      function _mrBuildOptions() {
+        const set = new Set();
+        for (const r of ecrEcnData) {
+          const a = _mrCloseYM(r.ecrStep7Time); if (a) set.add(a);
+          const b = _mrCloseYM(r.ecnStep2Time); if (b) set.add(b);
+        }
+        set.add(_mrNow());
+        return [...set].sort().reverse().map(ym => {
+          const [y, m] = ym.split('-');
+          return { value: ym, label: `${y} 年 ${parseInt(m)} 月` };
+        });
+      }
+
+      /* 取「上一個完整月」；若當月為 1 月則回上一年 12 月 */
+      function _mrDefaultMonth() {
+        const now = new Date();
+        const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      }
+
+      /* 收集去重後的 ECR / ECN 清單（不含 placeholder） */
+      function _mrCollectUnique() {
+        const ecrMap = {}, ecnMap = {};
+        for (const r of ecrEcnData) {
+          if (r.ecrSerial && r.ecrSerial !== '(無ECR)' && !ecrMap[r.ecrSerial]) ecrMap[r.ecrSerial] = r;
+          if (r.ecnSerial && !ApiAdapter.isEcnPlaceholder(r.ecnSerial) && !ecnMap[r.ecnSerial]) ecnMap[r.ecnSerial] = r;
+        }
+        return { ecrs: Object.values(ecrMap), ecns: Object.values(ecnMap) };
+      }
+
+      /* 篩本月結案（ECR：ecrStep7Time；ECN：ecnStep2Time） */
+      function _mrFilterClosed(list, dateField, range) {
+        return list.filter(r => {
+          if (!r[dateField]) return false;
+          const d = DateUtils.parse(r[dateField]);
+          return d && d >= range.start && d <= range.end;
+        });
+      }
+
+      /* 拆 bucket：非目標年→按年；目標年→按月 */
+      function _mrBuildBuckets(closed, applyField, durField, targetYM) {
+        const { y: ty } = _mrParseYM(targetYM);
+        const yearG = {}, monthG = {};
+        for (const r of closed) {
+          const d = DateUtils.parse(r[applyField]); if (!d) continue;
+          const dur = parseFloat(r[durField]); if (isNaN(dur) || dur <= 0) continue;
+          const yy = d.getFullYear();
+          (yearG[yy] = yearG[yy] || []).push(dur);
+          if (yy === ty) {
+            const mm = d.getMonth() + 1;
+            (monthG[mm] = monthG[mm] || []).push(dur);
+          }
+        }
+        const yearBuckets = Object.keys(yearG).map(Number).sort().map(yy => ({
+          key: `y${yy}`, label: `${yy} 年`, count: yearG[yy].length, avg: _mrAvg(yearG[yy]),
+        }));
+        const monthBuckets = Object.keys(monthG).map(Number).sort((a,b)=>a-b).map(mm => ({
+          key: `m${mm}`, label: `${mm} 月`, count: monthG[mm].length, avg: _mrAvg(monthG[mm]),
+        }));
+        return { yearBuckets, monthBuckets };
+      }
+
+      /* impact = 占比 × 偏差；signFilter: 'pos'|'neg'|其他=全部；排除 pct<minPct，依 |impact| 取 topN，最後依 % 排序 */
+      function _mrTopImpact(buckets, overallAvg, totalCount, topN, minPct, signFilter) {
+        if (overallAvg === null || !totalCount) return [];
+        return buckets.map(b => ({
+            ...b,
+            dev: b.avg - overallAvg,
+            impact: b.count * (b.avg - overallAvg) / totalCount,
+          }))
+          .filter(b => b.pct >= (minPct || 5))
+          .filter(b => signFilter === 'pos' ? b.impact > 0 : signFilter === 'neg' ? b.impact < 0 : true)
+          .sort((a,b) => Math.abs(b.impact) - Math.abs(a.impact))
+          .slice(0, topN || 3)
+          .sort((a,b) => b.pct - a.pct);
+      }
+
+      /* 主計算：回傳整份月報資料 */
+      function _mrCalc(targetYM) {
+        const { ecrs, ecns } = _mrCollectUnique();
+        const range = _mrMonthRange(targetYM), prevRange = _mrMonthRange(_mrPrevMonth(targetYM));
+
+        // 快照：整體進行中/回報中 %
+        const ecrTotal = ecrs.length;
+        const ecrIP = ecrs.filter(r => r.ecrStatusText === '進行中').length;
+        const ecnTotal = ecns.length;
+        const ecnClosedTotal = ecns.filter(r => r.ecnStatusText === '同意結束' || r.ecnStatusText === '結案').length;
+        const ecnRW = ecns.filter(r => ['駁回結束','表單撤回'].includes(r.ecnStatusText)).length;
+        const ecnExec = Math.max(0, ecns.filter(r => r.ecnStep2Time).length - ecnClosedTotal);
+        const ecnIP = Math.max(0, ecnTotal - ecnClosedTotal - ecnExec - ecnRW);
+
+        const snapshot = {
+          ecrIPPct: _mrPct(ecrIP, ecrTotal),
+          ecnIPPct: _mrPct(ecnIP, ecnTotal),
+          ecnExecPct: _mrPct(ecnExec, ecnTotal),
+          ecrIP, ecrTotal, ecnIP, ecnExec, ecnTotal,
+        };
+
+        // 本月/上月結案
+        const ecrThis = _mrFilterClosed(ecrs, 'ecrStep7Time', range);
+        const ecrPrev = _mrFilterClosed(ecrs, 'ecrStep7Time', prevRange);
+        const ecnThis = _mrFilterClosed(ecns, 'ecnStep2Time', range);
+        const ecnPrev = _mrFilterClosed(ecns, 'ecnStep2Time', prevRange);
+
+        const durs = (arr, f) => arr.map(r => parseFloat(r[f])).filter(n => !isNaN(n) && n > 0);
+        const ecrThisAvg = _mrAvg(durs(ecrThis, 'ecrDuration'));
+        const ecrPrevAvg = _mrAvg(durs(ecrPrev, 'ecrDuration'));
+        const ecnThisAvg = _mrAvg(durs(ecnThis, 'ecnDuration'));
+        const ecnPrevAvg = _mrAvg(durs(ecnPrev, 'ecnDuration'));
+
+        const buildSection = (closed, applyField, durField, thisAvg, sectionYM) => {
+          if (!closed.length) return null;
+          const { yearBuckets, monthBuckets } = _mrBuildBuckets(closed, applyField, durField, sectionYM);
+          const total = closed.length;
+          const withPct = b => ({ ...b, pct: total ? Math.round(b.count / total * 100) : 0 });
+          const byYear = yearBuckets.map(withPct);
+          const byMonth = monthBuckets.map(withPct);
+          // candidates 排除自己整年，避免與月份重複
+          const secY = _mrParseYM(sectionYM).y;
+          const candidates = [...byYear.filter(b => b.key !== `y${secY}`), ...byMonth];
+          return { count: total, avg: thisAvg, byYear, byMonth, candidates };
+        };
+
+        const prevYM = _mrPrevMonth(targetYM);
+        return {
+          targetYM, prevYM,
+          snapshot,
+          ecr: {
+            thisCount: ecrThis.length, thisAvg: ecrThisAvg, prevAvg: ecrPrevAvg,
+            section: buildSection(ecrThis, 'ecrApplyTime', 'ecrDuration', ecrThisAvg, targetYM),
+            prevSection: buildSection(ecrPrev, 'ecrApplyTime', 'ecrDuration', ecrPrevAvg, prevYM),
+          },
+          ecn: {
+            thisCount: ecnThis.length, thisAvg: ecnThisAvg, prevAvg: ecnPrevAvg,
+            section: buildSection(ecnThis, 'ecnApplyTime', 'ecnDuration', ecnThisAvg, targetYM),
+            prevSection: buildSection(ecnPrev, 'ecnApplyTime', 'ecnDuration', ecnPrevAvg, prevYM),
+          },
+        };
+      }
+
+      /* A 區摘要：{text, html} — text 供複製，html 將「本月因…」用 <mark> 強調 */
+      function _mrBuildSummary(data) {
+        const { y, m } = _mrParseYM(data.targetYM);
+        const s = data.snapshot;
+        const prevM = _mrParseYM(data.prevYM).m;
+        const esc = Utils.escapeHtml;
+        const fmtParts = arr => arr.map(b =>
+          `${b.label.replace(/\s/g,'')}${b.count}筆(${b.pct}%)均${Math.round(b.avg)}天`).join('；');
+        const MARK_OPEN = '<mark style="background:#fef08a;color:#78350f;padding:1px 4px;border-radius:2px;">';
+        const MARK_CLOSE = '</mark>';
+
+        // 本月上升→上月找拉低、本月找拉高；下降則相反；0 天差 skip
+        const impactLine = (label, sec, prevSec, thisAvg, prevAvg) => {
+          if (!sec || thisAvg === null) return null;
+          if (prevAvg === null) {
+            const head = `${label}本月均天${Math.round(thisAvg)}天（上月無結案可比較）`;
+            const thisTop = _mrTopImpact(sec.candidates, thisAvg, sec.count, 3, 5);
+            if (!thisTop.length) return { text: head, html: esc(head) };
+            const cause = `本月因${fmtParts(thisTop)}`;
+            return {
+              text: `${head}，${cause}`,
+              html: `${esc(head)}，${MARK_OPEN}${esc(cause)}${MARK_CLOSE}`,
+            };
+          }
+          const diff = Math.round(thisAvg - prevAvg);
+          if (diff === 0) return null;
+          const up = diff > 0;
+          const head = `${label}本月比上月${up?'上升':'下降'}${Math.abs(diff)}天`;
+          const thisTop = _mrTopImpact(sec.candidates, thisAvg, sec.count, 3, 5, up?'pos':'neg');
+          const prevTop = prevSec
+            ? _mrTopImpact(prevSec.candidates, prevAvg, prevSec.count, 3, 5, up?'neg':'pos')
+            : [];
+          const segs = [], segsHtml = [];
+          if (prevTop.length) {
+            const seg = `${prevM}月因${fmtParts(prevTop)}拉${up?'低':'高'}`;
+            segs.push(seg); segsHtml.push(esc(seg));
+          }
+          if (thisTop.length) {
+            const seg = `本月因${fmtParts(thisTop)}故均天${up?'上升':'下降'}`;
+            segs.push(seg);
+            segsHtml.push(`${MARK_OPEN}${esc(seg)}${MARK_CLOSE}`);
+          }
+          if (!segs.length) return { text: head, html: esc(head) };
+          return {
+            text: `${head}。${segs.join('；')}`,
+            html: `${esc(head)}。${segsHtml.join('；')}`,
+          };
+        };
+
+        const lines = [];
+        const push = (text, html) => lines.push({ text, html: html === undefined ? esc(text) : html });
+        push(`【${y} 年 ${m} 月結算】`);
+        push(`ECR 進行中 ${s.ecrIPPct}%，ECN 進行中 ${s.ecnIPPct}%，ECN 回報中 ${s.ecnExecPct}%`);
+        const ecrImp = impactLine('ECR', data.ecr.section, data.ecr.prevSection, data.ecr.thisAvg, data.ecr.prevAvg);
+        const ecnImp = impactLine('ECN', data.ecn.section, data.ecn.prevSection, data.ecn.thisAvg, data.ecn.prevAvg);
+        if (ecrImp) lines.push(ecrImp);
+        if (ecnImp) lines.push(ecnImp);
+        return {
+          text: lines.map(l => l.text).join('\n'),
+          html: lines.map(l => l.html).join('\n'),
+        };
+      }
+
+      /* B 區：詳細分析 HTML */
+      function _mrBuildDetailHtml(data) {
+        const { y, m } = _mrParseYM(data.targetYM);
+        const renderGroups = (groups, overallAvg, totalCount, monthDiff) => {
+          if (!groups.length) return '<div style="color:#94a3b8;padding-left:12px;">（無資料）</div>';
+          const rows = groups.map(b => {
+            const impact = totalCount ? b.count * (b.avg - overallAvg) / totalCount : 0;
+            // 只標與本月方向同向的分組（差距≥1天）
+            let icon = '';
+            if (monthDiff !== null && Math.abs(impact) >= 1) {
+              if (monthDiff > 0 && impact > 0) {
+                icon = ' <i class="fa-solid fa-arrow-up" style="color:rgb(220 38 38);"></i>';
+              } else if (monthDiff < 0 && impact < 0) {
+                icon = ' <i class="fa-solid fa-arrow-down" style="color:rgb(4 120 87);"></i>';
+              }
+            }
+            return `<tr>
+              <td style="padding:3px 8px;border-bottom:1px solid #f1f5f9;">${Utils.escapeHtml(b.label)}</td>
+              <td style="padding:3px 8px;border-bottom:1px solid #f1f5f9;text-align:right;">${b.count} 筆</td>
+              <td style="padding:3px 8px;border-bottom:1px solid #f1f5f9;text-align:right;">${b.pct}%</td>
+              <td style="padding:3px 8px;border-bottom:1px solid #f1f5f9;text-align:right;">${Math.round(b.avg)} 天${icon}</td>
+            </tr>`;
+          }).join('');
+          return `<table style="width:100%;font-size:12px;margin-top:4px;">
+            <thead><tr style="background:#f8fafc;color:#64748b;">
+              <th style="padding:4px 8px;text-align:left;">分組</th>
+              <th style="padding:4px 8px;text-align:right;">筆數</th>
+              <th style="padding:4px 8px;text-align:right;">占比</th>
+              <th style="padding:4px 8px;text-align:right;">均天</th>
+            </tr></thead><tbody>${rows}</tbody></table>`;
+        };
+        const renderSection = (title, headerClass, sec, thisAvg, prevAvg) => {
+          if (!sec) return `<div style="margin-bottom:16px;">
+            <div class="${headerClass}" style="padding:6px 10px;border-radius:4px;font-weight:bold;">═ ${title} ${y}-${String(m).padStart(2,'0')} 本月無結案 ═</div>
+          </div>`;
+          // 差距四捨五入 = 0 視同無方向
+          const rawDiff = (thisAvg !== null && prevAvg !== null) ? (thisAvg - prevAvg) : null;
+          const monthDiff = (rawDiff !== null && Math.round(rawDiff) !== 0) ? rawDiff : null;
+          let legend = '';
+          if (monthDiff !== null) {
+            legend = monthDiff > 0
+              ? '<i class="fa-solid fa-arrow-up" style="color:rgb(220 38 38);"></i> = 本月上升的主要來源'
+              : '<i class="fa-solid fa-arrow-down" style="color:rgb(4 120 87);"></i> = 本月下降的主要來源';
+          }
+          const legendHtml = legend ? `<div style="margin-top:6px;color:#64748b;font-size:11px;">${legend}</div>` : '';
+          return `<div style="margin-bottom:20px;">
+            <div class="${headerClass}" style="padding:6px 10px;border-radius:4px;font-weight:bold;">═ ${title} ${y}-${String(m).padStart(2,'0')} 結案 ${sec.count} 筆，整體均天 ${Math.round(sec.avg)} 天 ═</div>
+            <div style="padding:6px 4px;">
+              <div style="margin-top:8px;"><b style="color:#475569;"><i class="fa-solid fa-caret-right text-slate-400"></i> 依申請年份</b>${renderGroups(sec.byYear, sec.avg, sec.count, monthDiff)}</div>
+              <div style="margin-top:8px;"><b style="color:#475569;"><i class="fa-solid fa-caret-right text-slate-400"></i> 依 ${y} 年申請月份</b>${renderGroups(sec.byMonth, sec.avg, sec.count, monthDiff)}</div>
+              ${legendHtml}
+            </div>
+          </div>`;
+        };
+        return renderSection('ECR', 'bg-orange-50 text-orange-600', data.ecr.section, data.ecr.thisAvg, data.ecr.prevAvg)
+          + renderSection('ECN', 'bg-blue-50 text-blue-600', data.ecn.section, data.ecn.thisAvg, data.ecn.prevAvg);
+      }
+
+      /* 詳細分析：純文字版（用於複製） */
+      function _mrBuildDetailText(data) {
+        const { y, m } = _mrParseYM(data.targetYM);
+        const groupLines = (groups, overallAvg, totalCount, monthDiff) => {
+          if (!groups.length) return '  （無資料）';
+          return groups.map(b => {
+            const impact = totalCount ? b.count * (b.avg - overallAvg) / totalCount : 0;
+            let arrow = '';
+            if (monthDiff !== null && Math.abs(impact) >= 1) {
+              if (monthDiff > 0 && impact > 0) arrow = ' ↑';
+              else if (monthDiff < 0 && impact < 0) arrow = ' ↓';
+            }
+            return `  ${b.label}：${b.count} 筆（${b.pct}%）均 ${Math.round(b.avg)} 天${arrow}`;
+          }).join('\n');
+        };
+        const sectionText = (title, sec, thisAvg, prevAvg) => {
+          if (!sec) return `═ ${title} ${y}-${String(m).padStart(2,'0')} 本月無結案 ═`;
+          const rawDiff = (thisAvg !== null && prevAvg !== null) ? (thisAvg - prevAvg) : null;
+          const monthDiff = (rawDiff !== null && Math.round(rawDiff) !== 0) ? rawDiff : null;
+          const lines = [
+            `═ ${title} ${y}-${String(m).padStart(2,'0')} 結案 ${sec.count} 筆，整體均天 ${Math.round(sec.avg)} 天 ═`,
+            `依申請年份：`,
+            groupLines(sec.byYear, sec.avg, sec.count, monthDiff),
+            `依 ${y} 年申請月份：`,
+            groupLines(sec.byMonth, sec.avg, sec.count, monthDiff),
+          ];
+          if (monthDiff !== null) {
+            lines.push(monthDiff > 0 ? '（↑ = 本月上升的主要來源）' : '（↓ = 本月下降的主要來源）');
+          }
+          return lines.join('\n');
+        };
+        return sectionText('ECR', data.ecr.section, data.ecr.thisAvg, data.ecr.prevAvg)
+          + '\n\n' + sectionText('ECN', data.ecn.section, data.ecn.thisAvg, data.ecn.prevAvg);
+      }
+
+      /* 入口：開啟 modal */
+      function showMonthlyReportModal() {
+        if (!ecrEcnData.length) return ToastModule.show('尚無資料，請先同步 BPM API', 'warning');
+        const sel = document.getElementById('monthlyReportMonthSelect');
+        const opts = _mrBuildOptions();
+        sel.innerHTML = opts.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
+        const def = _mrDefaultMonth();
+        if (opts.some(o => o.value === def)) sel.value = def;
+        renderMonthlyReport();
+        document.getElementById('monthlyReportModal').classList.add('show');
+      }
+
+      /* 重新渲染（月份切換時） */
+      function renderMonthlyReport() {
+        const ym = document.getElementById('monthlyReportMonthSelect').value;
+        if (!ym) return;
+        const warn = document.getElementById('monthlyReportWarning');
+        if (ym === _mrNow()) warn.style.display = ''; else warn.style.display = 'none';
+        const data = _mrCalc(ym);
+        window._monthlyReportCache = data;
+        const summary = _mrBuildSummary(data);
+        window._monthlyReportSummaryText = summary.text;
+        document.getElementById('monthlyReportSummary').innerHTML = summary.html;
+        document.getElementById('monthlyReportDetail').innerHTML = _mrBuildDetailHtml(data);
+      }
+
+      /* 複製摘要（純文字，不含 mark） */
+      function copyMonthlyReportSummary() {
+        const t = window._monthlyReportSummaryText || '';
+        navigator.clipboard.writeText(t).then(
+          () => ToastModule.show('已複製精簡摘要', 'success'),
+          () => ToastModule.show('複製失敗', 'error'));
+      }
+      /* 複製詳細分析 */
+      function copyMonthlyReportDetail() {
+        if (!window._monthlyReportCache) return;
+        const t = _mrBuildDetailText(window._monthlyReportCache);
+        navigator.clipboard.writeText(t).then(
+          () => ToastModule.show('已複製詳細分析', 'success'),
+          () => ToastModule.show('複製失敗', 'error'));
+      }
+
       function showEcrEcnStepModal(type){
         if(!ecrEcnData.length)return ToastModule.show('請先匯入資料','warning');
         document.getElementById('ecrEcnStepModalTitle').textContent=`${type} 各關卡簽核中統計`;
