@@ -7703,6 +7703,12 @@
         let t = settingsData.maintainers.filter((e) => e.active),
           i = settingsData.maintainers.filter((e) => !e.active);
         e.innerHTML = `
+              <!-- 我的帳號：改自己的密碼，與下方管理他人的區塊分開 -->
+              <div class="flex items-center justify-between gap-4 mb-6 p-6 bg-white border border-gray-200 rounded-xl shadow-sm">
+              <div><h4 class="flex items-center gap-2 font-bold text-lg text-gray-700"><i class="fa-solid fa-key text-ms-blue"></i> 我的帳號</h4>
+              <p class="mt-1 text-sm text-gray-500">目前登入：${Utils.escapeHtml(ecUser) || "（未取得工號）"}　密碼僅自己知道，管理員也無法查看</p></div>
+              <button onclick="openChangePassword()" class="px-6 py-2 whitespace-nowrap btn-primary"><i class="fa-solid fa-key mr-2"></i>修改密碼</button></div>
+
               <!-- 新增人員區塊 -->
               <div class="mb-6 p-6 bg-white border border-gray-200 rounded-xl shadow-sm">
               <h4 class="flex items-center gap-2 mb-4 font-bold text-lg text-gray-700"><i class="fa-solid fa-user-plus text-ms-blue"></i> 新增人員</h4>
