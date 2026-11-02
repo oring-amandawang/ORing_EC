@@ -673,6 +673,10 @@
         PCB_FIELDS: ["updateDate1", "note1", "updateDate2", "note2"],
         pcb: new Map(), // id → { updateDate1, note1, updateDate2, note2 }
 
+        // 本次 session 是否真的從 Gist 載入過對照表；快取不存 overlay，所以 isPCBLoaded 那類旗標不能拿來判斷
+        ecnLoaded: false,
+        pcbLoaded: false,
+
         /* _override(ECN/PCB 通用)：手填欄位強制覆蓋 */
         _extractOverride(r) {
           return (r._override && typeof r._override === "object") ? r._override : null;
@@ -695,6 +699,7 @@
             const o = this.extractEcnFields(r);
             if (this.hasEcnContent(o)) this.ecn.set(r.id, o);
           }
+          this.ecnLoaded = true;
         },
         extractEcnFields(r) {
           const o = {};
@@ -713,15 +718,18 @@
           this._applyOverride(row, o);
           return row;
         },
-        // ECN id 格式 ECN-YYYYMM-NNN，從中抽年份
+        // ECN id 格式 ECN-YYYYMM-NNN，從中抽年份；這是存檔分片的唯一規則
+        ecnYearOf(r) {
+          const m = (r.id || "").match(/-(\d{4})\d{2}-/);
+          return m ? m[1] : (r.month || "").substring(0, 4);
+        },
         buildEcnByYear(ecnDataArr) {
           const byYear = {};
           for (const r of ecnDataArr || []) {
             if (!r || !r.id) continue;
             const o = this.extractEcnFields(r);
             if (!this.hasEcnContent(o)) continue;
-            const m = r.id.match(/-(\d{4})\d{2}-/);
-            const year = m ? m[1] : (r.month || "").substring(0, 4);
+            const year = this.ecnYearOf(r);
             if (!year) continue;
             if (!byYear[year]) byYear[year] = [];
             byYear[year].push({ id: r.id, ...o });
@@ -737,6 +745,7 @@
             const o = this.extractPcbFields(r);
             if (this.hasPcbContent(o)) this.pcb.set(r.id, o);
           }
+          this.pcbLoaded = true;
         },
         extractPcbFields(r) {
           const o = {};
@@ -755,15 +764,19 @@
           this._applyOverride(row, o);
           return row;
         },
-        // PCB id 格式 PNAx-YYYY-MM-NNNN，從中抽年份
+        // PCB id 格式 PNAx-YYYY-MM-NNNN，從中抽年份；這是存檔分片的唯一規則
+        // 完成日（time3）只管排序與顯示，不決定存在哪個檔案
+        pcbYearOf(r) {
+          const m = (r.id || "").match(/-(\d{4})-/);
+          return m ? m[1] : (r.time3 || "").substring(0, 4);
+        },
         buildPcbByYear(pcbDataArr) {
           const byYear = {};
           for (const r of pcbDataArr || []) {
             if (!r || !r.id) continue;
             const o = this.extractPcbFields(r);
             if (!this.hasPcbContent(o)) continue;
-            const m = r.id.match(/-(\d{4})-/);
-            const year = m ? m[1] : (r.time3 || "").substring(0, 4);
+            const year = this.pcbYearOf(r);
             if (!year) continue;
             if (!byYear[year]) byYear[year] = [];
             byYear[year].push({ id: r.id, ...o });
@@ -955,17 +968,19 @@
 
           dirtyYears.forEach((year) => {
             const records = byYear[year] || [];
-            if (records.length > 0) {
-              const cleanRecords = records.map(r => {
-                const { _dirty, _isNew, _origIdx, _idx, _workDays, _isOverdue, _stage, ...rest } = r;
-                return rest;
-              });
-              const fileName = `${prefix}${year}.json`;
-              files[fileName] = {
-                content: JSON.stringify({ _lastUpdated: timestamp, records: cleanRecords }),
-              };
-              affectedKeys.push(`${prefix}${year}`);
-            }
+            const key = `${prefix}${year}`;
+            // 空陣列只在該年檔案原本就存在時寫回，代表使用者真的把該年刪光，要讓刪除生效
+            // 原本沒有檔案就跳過，避免誤按新增、空白列被清掉後憑空生出空檔案
+            if (records.length === 0 && !this.fileTimestamps[key]) return;
+            const cleanRecords = records.map(r => {
+              const { _dirty, _isNew, _origIdx, _idx, _workDays, _isOverdue, _stage, ...rest } = r;
+              return rest;
+            });
+            const fileName = `${prefix}${year}.json`;
+            files[fileName] = {
+              content: JSON.stringify({ _lastUpdated: timestamp, records: cleanRecords }),
+            };
+            affectedKeys.push(key);
           });
           return { files, timestamp, affectedKeys };
         },
@@ -1192,25 +1207,24 @@
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const content = await res.text();
                 console.log(`[Gist] 已下載完整檔案: ${name} (${Math.round(content.length / 1024)}KB)`);
-                return { name, content, success: true };
+                return { name, content };
               } catch (e) {
+                // 必須中斷整個載入：若放行，該年份會以零筆載入，下次儲存就把整年覆蓋成空
+                // 提示交給呼叫端的 catch，這裡再跳一次會變成兩個紅色吐司
                 console.error(`[Gist] 下載 ${name} 失敗:`, e);
-                return { name, success: false };
+                throw e;
               }
             }),
           );
 
-          downloads.forEach(({ name, content, success }) => {
-            if (success) {
-              processed[name] = { content, truncated: false };
-            }
+          downloads.forEach(({ name, content }) => {
+            processed[name] = { content, truncated: false };
           });
         }
         return processed;
       }
 
       /* 應用程式設定 */
-      const APP_CONFIG = { CREDENTIALS: [{ user: "admin", pass: "admin" }] };
       const PAGE_SIZE = 50;
       const SYNC_COOLDOWN = 30 * 1000;
       const CACHE_MAX_AGE = 5 * 60 * 1000;
@@ -1704,11 +1718,10 @@
         },
 
 
-        /* 年→月連動下拉。ymList 吃 'YYYY-MM' / 'YYYY/MM'（可含 null）
-           opts.sep 回傳分隔符（預設 '-'）；opts.defaultYM 強制預設，未給則保留使用者目前選擇 */
+        /* 年→月連動下拉。ymList 吃 'YYYY-MM' / 'YYYY/MM'（可含 null），一律回傳 'YYYY-MM'
+           opts.defaultYM 強制預設，未給則保留使用者目前選擇 */
         _ymMaps: {},
         initYearMonthSelect(yearId, monthId, ymList, opts = {}) {
-          const sep = opts.sep || "-";
           const map = {};
           for (const ym of ymList) {
             const mt = /^(\d{4})[-\/](\d{1,2})/.exec(ym || "");
@@ -1716,7 +1729,7 @@
             (map[mt[1]] = map[mt[1]] || new Set()).add(mt[2].padStart(2, "0"));
           }
           for (const y in map) map[y] = [...map[y]].sort().reverse();
-          this._ymMaps[yearId] = { map, monthId, sep };
+          this._ymMaps[yearId] = { map, monthId };
           const years = Object.keys(map);
           const ySel = document.getElementById(yearId), mSel = document.getElementById(monthId);
           if (!years.length || !ySel || !mSel) return "";
@@ -1729,7 +1742,7 @@
           return this.syncMonthToYear(yearId, preferM);
         },
 
-        /* 年份變更後重填月份；preferMonth 存在就選它，否則該年最新月。回傳 YYYY?MM */
+        /* 年份變更後重填月份；preferMonth 存在就選它，否則該年最新月。回傳 YYYY-MM */
         syncMonthToYear(yearId, preferMonth) {
           const cfg = this._ymMaps[yearId];
           if (!cfg) return "";
@@ -1737,15 +1750,15 @@
           const months = cfg.map[ySel.value] || [];
           mSel.innerHTML = months.map((m) => `<option value="${m}">${parseInt(m)} 月</option>`).join("");
           mSel.value = preferMonth && months.includes(preferMonth) ? preferMonth : months[0] || "";
-          return mSel.value ? `${ySel.value}${cfg.sep}${mSel.value}` : "";
+          return mSel.value ? `${ySel.value}-${mSel.value}` : "";
         },
 
-        /* 目前選到的 YYYY?MM（分隔符依 init 時的 sep） */
+        /* 目前選到的 YYYY-MM */
         getYearMonthValue(yearId) {
           const cfg = this._ymMaps[yearId];
           if (!cfg) return "";
           const y = document.getElementById(yearId)?.value, m = document.getElementById(cfg.monthId)?.value;
-          return y && m ? `${y}${cfg.sep}${m}` : "";
+          return y && m ? `${y}-${m}` : "";
         },
 
         /* Textarea 自動調整 */
@@ -2529,6 +2542,9 @@
 
       /* UI 狀態 */
       let isLoggedIn = false;
+      // 登入帳密只留在記憶體供 Worker 驗證寫入，不進 localStorage
+      let ecUser = "";
+      let ecWriteKey = "";
       let isSyncing = false;
       let lastSyncTime = null;
       const dirtySections = new Set();
@@ -2633,8 +2649,8 @@
       }
       const generateMaintainerOptions = (e) => {
         let o = getActiveMaintainers(),
-          n = `<option value=""><\/option>` + o.map((o) => `<option value="${o}" ${e === o ? "selected" : ""}>${o}<\/option>`).join("");
-        return (e && !o.includes(e) && (n += `<option value="${e}" selected>${e}<\/option>`), n);
+          n = `<option value=""><\/option>` + o.map((o) => `<option value="${Utils.escapeHtml(o)}" ${e === o ? "selected" : ""}>${Utils.escapeHtml(o)}<\/option>`).join("");
+        return (e && !o.includes(e) && (n += `<option value="${Utils.escapeHtml(e)}" selected>${Utils.escapeHtml(e)}<\/option>`), n);
       };
 
       /* 動態選單生成 */
@@ -2646,7 +2662,7 @@
           o.forEach((e) => {
             if (e.active) {
               let o = t === e.value ? "selected" : "";
-              i += `<option value="${e.value}" ${o}>${e.text}</option>`;
+              i += `<option value="${Utils.escapeHtml(e.value)}" ${o}>${Utils.escapeHtml(e.text)}</option>`;
             }
           }),
           t)
@@ -2655,7 +2671,7 @@
           if (!l) {
             let n = o.find((e) => e.value === t),
               a = n ? n.text : t;
-            i += `<option value="${t}" selected class="text-gray-500 bg-gray-200">[舊/停用] ${a}</option>`;
+            i += `<option value="${Utils.escapeHtml(t)}" selected class="text-gray-500 bg-gray-200">[舊/停用] ${Utils.escapeHtml(a)}</option>`;
           }
         }
         return i;
@@ -3321,6 +3337,17 @@
       // 6. 資料存取層 (Data Access Layer)
       // ==========================================
 
+      /* Gist 寫入用 headers */
+      function gistWriteHeaders() {
+        const headers = { Authorization: `token ${GITHUB_TOKEN}`, "Content-Type": "application/json" };
+        // 直連模式（USE_WORKER=false 的緊急備援）不能帶自訂 header，GitHub API 的 CORS preflight 會擋掉
+        if (USE_WORKER) {
+          headers["X-EC-Auth"] = ecWriteKey;
+          headers["X-EC-User"] = ecUser;
+        }
+        return headers;
+      }
+
       /* 快取讀取 */
       function loadFromCache() {
         try {
@@ -3585,7 +3612,7 @@
           const { ID, FILES } = GIST_CONFIG.ECN;
           const res = await fetch(`${GITHUB_API_BASE}/gists/${ID}`, {
             method: "PATCH",
-            headers: { Authorization: `token ${GITHUB_TOKEN}`, "Content-Type": "application/json" },
+            headers: gistWriteHeaders(),
             body: JSON.stringify({
               files: {
                 [FILES.HOLIDAYS]: {
@@ -3785,6 +3812,14 @@
           let i = a[t];
           if (!i) return null;
 
+          // overlay 頁面沒成功載入過對照表就存檔，會把整年覆蓋成記憶體裡僅有的幾筆
+          const needEcn = i.type === "ecn";
+          const needPcb = ["pcb_list", "pcb_gpms", "pcb_maint"].includes(i.type);
+          if ((needEcn && !OverlayModule.ecnLoaded) || (needPcb && !OverlayModule.pcbLoaded)) {
+            ToastModule.show("資料尚未同步成功，請先按右上角重新整理，成功後再儲存", "warning");
+            return null;
+          }
+
           let { ID: d } = GIST_CONFIG[i.gist];
           let p = i.data();
           trimInputsOnly(p);
@@ -3842,6 +3877,11 @@
 
           // ECN/PCB 走 overlay 格式（只存使用者編輯欄位）；Transfer 純讀不存
           if (i.type === "ecn" || i.type === "pcb_list") {
+            // 標髒依日期欄位，分片依序號年份；兩者不同年時，被改的那筆所在的檔案會漏寫，這裡補標
+            const yearOf = i.type === "ecn" ? (r) => OverlayModule.ecnYearOf(r) : (r) => OverlayModule.pcbYearOf(r);
+            for (const row of p) {
+              if (row && row._dirty) YearlyModule.markDirty(i.type, yearOf(row));
+            }
             const dirtyYears = YearlyModule.getDirtyYears(i.type);
             const overlayFiles = {};
             const overlayKeys = [];
@@ -3900,13 +3940,13 @@
           try {
             let s = await fetch(`${GITHUB_API_BASE}/gists/${d}`, {
               method: "PATCH",
-              headers: {
-                Authorization: `token ${GITHUB_TOKEN}`,
-                "Content-Type": "application/json",
-              },
+              headers: gistWriteHeaders(),
               body: JSON.stringify({ files: r }),
             });
-            if (!s.ok) throw Error(`HTTP ${s.status}`);
+            if (!s.ok) {
+              const reason = { 401: "登入已失效或密碼已被修改，請重新登入", 403: "尚未完成首次改密碼，請重新登入", 429: "嘗試次數過多，請稍後再試" }[s.status];
+              throw Error(reason || `HTTP ${s.status}`);
+            }
             if (saveTimestamp && affectedKeys.length > 0) {
               YearlyModule.applyTimestamps(affectedKeys, saveTimestamp);
             }
@@ -4055,32 +4095,115 @@
       }
 
       /* 驗證登入 */
-      function checkLogin() {
+      async function checkLogin() {
         const u = document.getElementById("loginUser").value.trim();
         const p = document.getElementById("loginPass").value.trim();
         if (!u && !p) { ToastModule.show("請輸入帳號和密碼", "warning"); return; }
         if (!u) { ToastModule.show("請輸入帳號", "warning"); return; }
         if (!p) { ToastModule.show("請輸入密碼", "warning"); return; }
-        const staticValid = APP_CONFIG.CREDENTIALS.find((c) => c.user === u && c.pass === p);
-        const dynamicValid = settingsData.maintainers.find((m) => m.active && m.id && m.id === u && m.id === p);
-        if (staticValid || dynamicValid) {
-          isLoggedIn = true;
-          document.getElementById("loginModal").classList.add("hidden");
-          const welcomeName = dynamicValid ? dynamicValid.name : "管理員";
-          ToastModule.show(`登入成功！歡迎 ${welcomeName}`, "success");
-          const navText = document.getElementById("navLoginText");
-          if (navText) navText.innerText = "登出";
-          updateAuthUI();
-          refreshCurrentPage();
-        } else {
+
+        // 密碼一律交給 Worker 驗。工號公開在 settings.json，不能當密碼
+        // 直連模式沒有 Worker 可問，而該模式的 Token 本來就寫在原始碼裡，無密碼可守
+        if (!USE_WORKER) return finishLogin(u, p);
+
+        let res;
+        try {
+          res = await fetch(`${WORKER_URL}/auth`, { headers: { "X-EC-User": u, "X-EC-Auth": p } });
+        } catch (e) {
+          ToastModule.show("無法連線驗證服務，請確認網路後再試", "error");
+          return;
+        }
+        if (res.status === 429) return ToastModule.show("嘗試次數過多，請 15 分鐘後再試", "error");
+        if (!res.ok) {
           ToastModule.show("帳號或密碼錯誤", "error");
           document.getElementById("loginPass").value = "";
+          return;
+        }
+
+        const info = await res.json();
+        // Worker 尚未啟用驗證時（過渡期），沿用舊規則：工號即密碼
+        if (!info.enforced) {
+          const legacy = (settingsData.maintainers || []).find((m) => m.active && m.id && m.id === u && m.id === p);
+          if (!legacy) return ToastModule.show("帳號或密碼錯誤", "error");
+          return finishLogin(u, p);
+        }
+        if (info.mustChange) return openChangePassword({ forced: true, user: u, current: p });
+        finishLogin(u, p);
+      }
+
+      /* 完成登入：記住帳密並更新介面 */
+      function finishLogin(u, p) {
+        isLoggedIn = true;
+        ecUser = u;
+        ecWriteKey = p;
+        document.getElementById("loginModal").classList.add("hidden");
+        document.getElementById("loginPass").value = "";
+        const who = (settingsData.maintainers || []).find((m) => m.active && m.id === u);
+        ToastModule.show(`登入成功！歡迎 ${who ? who.name : u}`, "success");
+        const navText = document.getElementById("navLoginText");
+        if (navText) navText.innerText = "登出";
+        updateAuthUI();
+        refreshCurrentPage();
+      }
+
+      /* 修改密碼視窗；forced 為首次登入的強制修改，此時尚未登入 */
+      let _cpState = null;
+      function openChangePassword(opts = {}) {
+        if (!USE_WORKER) return ToastModule.show("備援直連模式不支援修改密碼", "warning");
+        if (!opts.forced && !isLoggedIn) return;
+        _cpState = opts.forced ? { forced: true, user: opts.user, current: opts.current } : { forced: false, user: ecUser, current: ecWriteKey };
+        document.getElementById("cpNew").value = "";
+        document.getElementById("cpConfirm").value = "";
+        document.getElementById("cpHint").textContent = _cpState.forced ? "這是首次登入，請先設定自己的密碼才能繼續" : "修改後請記住新密碼，管理員也無法查看";
+        document.getElementById("cpCancelBtn").textContent = _cpState.forced ? "取消登入" : "取消";
+        document.getElementById("loginModal").classList.add("hidden");
+        document.getElementById("changePasswordModal").classList.remove("hidden");
+        document.getElementById("cpNew").focus();
+      }
+      function closeChangePassword() {
+        const wasForced = _cpState && _cpState.forced;
+        _cpState = null;
+        document.getElementById("changePasswordModal").classList.add("hidden");
+        if (wasForced) ToastModule.show("已取消登入", "info");
+      }
+      async function submitChangePassword() {
+        if (!_cpState) return;
+        const next = document.getElementById("cpNew").value;
+        const again = document.getElementById("cpConfirm").value;
+        if (next !== again) return ToastModule.show("兩次輸入的新密碼不一致", "warning");
+        let res;
+        try {
+          res = await fetch(`${WORKER_URL}/auth/change`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-EC-User": _cpState.user, "X-EC-Auth": _cpState.current },
+            body: JSON.stringify({ newPassword: next }),
+          });
+        } catch (e) {
+          return ToastModule.show("無法連線驗證服務，請確認網路後再試", "error");
+        }
+        if (res.status === 422) {
+          const body = await res.json().catch(() => ({}));
+          return ToastModule.show(body.message || "新密碼不符合規則", "warning");
+        }
+        if (!res.ok) return ToastModule.show(res.status === 429 ? "嘗試次數過多，請稍後再試" : "密碼修改失敗，請重新登入後再試", "error");
+
+        const { forced, user } = _cpState;
+        _cpState = null;
+        document.getElementById("changePasswordModal").classList.add("hidden");
+        if (forced) {
+          ToastModule.show("密碼已設定", "success");
+          finishLogin(user, next);
+        } else {
+          ecWriteKey = next;
+          ToastModule.show("密碼已修改", "success");
         }
       }
 
       /* 登出 */
       function logout() {
         isLoggedIn = false;
+        ecUser = "";
+        ecWriteKey = "";
         ToastModule.show("已登出", "info");
         updateAuthUI();
         const activePage = document.querySelector(".page.active");
@@ -4394,14 +4517,14 @@
             plmLocked = !t || skip;
             return `<tr class="transition-colors hover:bg-gray-50 ${e._dirty ? "row-dirty" : ""}" data-idx="${e.id}">
                   <td class="${cb} text-ms-blue sticky-col-cell">${e.id}</td>
-                  <td class="${c}">${e.ecrId}</td>
-                  <td class="${cc}"><span class="${getBadgeClass(e.status)}">${e.status}</span></td>
-                  <td class="${c}">${e.applicant}</td>
+                  <td class="${c}">${Utils.escapeHtml(e.ecrId)}</td>
+                  <td class="${cc}"><span class="${getBadgeClass(e.status)}">${Utils.escapeHtml(e.status)}</span></td>
+                  <td class="${c}">${Utils.escapeHtml(e.applicant)}</td>
                   <td class="${c}"><div class="overflow-y-auto max-h-[100px] text-gray-600 leading-snug whitespace-normal break-words">${Utils.formatPartNo(e.partNo)}</div></td>
-                  <td class="${c}">${e.approver}</td>
-                  <td class="${cc}">${e.priority || ""}</td>
-                  <td class="${c}"><div class="overflow-y-auto max-h-[100px] leading-snug whitespace-normal break-words">${e.changeReason || ""}</div></td>
-                  <td class="${c}"><div class="overflow-y-auto max-h-[100px] leading-snug whitespace-normal break-words">${e.scope || ""}</div></td>
+                  <td class="${c}">${Utils.escapeHtml(e.approver)}</td>
+                  <td class="${cc}">${Utils.escapeHtml(e.priority)}</td>
+                  <td class="${c}"><div class="overflow-y-auto max-h-[100px] leading-snug whitespace-normal break-words">${Utils.escapeHtml(e.changeReason)}</div></td>
+                  <td class="${c}"><div class="overflow-y-auto max-h-[100px] leading-snug whitespace-normal break-words">${Utils.escapeHtml(e.scope)}</div></td>
                   <td class="${cc}">${DateUtils.formatDisplay(e.applyTime)}</td>
                   <td class="${cc} px-0.5">${e.approveTime1 ? DateUtils.formatDisplay(e.approveTime1) + (e.isRejected1 ? '<span class="ml-0.5 font-bold text-[10px] text-red-500 tracking-tighter">(駁)</span>' : isVoid && e.status === "表單撤回" ? '<span class="ml-0.5 font-bold text-[10px] text-red-500 tracking-tighter">(撤)</span>' : "") : "-"}</td>
                   <td class="${cc} px-0.5">${e.approveTime ? DateUtils.formatDisplay(e.approveTime) + (e.isRejected ? '<span class="ml-0.5 font-bold text-[10px] text-red-500 tracking-tighter">(駁)</span>' : "") : "-"}</td>
@@ -6521,21 +6644,18 @@
       });
 
       /* P3 PCB 詳細清單：API 主檔 + GIST overlay（更新日/逾期說明） */
+      // 失敗必須往上拋：吞掉的話 createPageSync 會誤判 overlay 已載入，之後存檔就把整年覆蓋成記憶體裡的少數幾筆
       async function loadPcbOverlayFromGist() {
-        try {
-          const { ID, PREFIX } = GIST_CONFIG.PCB;
-          const r = await fetch(`${GITHUB_API_BASE}/gists/${ID}?t=${Date.now()}`, {
-            headers: { Authorization: `token ${GITHUB_TOKEN}` },
-          });
-          if (!r.ok) return;
-          const gist = await r.json();
-          const files = await handleTruncatedFiles(gist.files);
-          OverlayModule.loadPcbFromArray(YearlyModule.loadAndMerge(files, PREFIX.LIST, null));
-          pcbStore.gpms = YearlyModule.loadAndMerge(files, PREFIX.GPMS, "date");
-          pcbStore.maintain = YearlyModule.loadAndMerge(files, PREFIX.MAINTAIN, "date");
-        } catch (e) {
-          console.error("[loadPcbOverlayFromGist] 失敗", e);
-        }
+        const { ID, PREFIX } = GIST_CONFIG.PCB;
+        const r = await fetch(`${GITHUB_API_BASE}/gists/${ID}?t=${Date.now()}`, {
+          headers: { Authorization: `token ${GITHUB_TOKEN}` },
+        });
+        if (!r.ok) throw new Error(`PCB overlay HTTP ${r.status}`);
+        const gist = await r.json();
+        const files = await handleTruncatedFiles(gist.files);
+        OverlayModule.loadPcbFromArray(YearlyModule.loadAndMerge(files, PREFIX.LIST, null));
+        pcbStore.gpms = YearlyModule.loadAndMerge(files, PREFIX.GPMS, "date");
+        pcbStore.maintain = YearlyModule.loadAndMerge(files, PREFIX.MAINTAIN, "date");
       }
 
       const syncPcbFromAPI = createPageSync({
@@ -7605,12 +7725,12 @@
                           .map(
                             (e) => `
                   <div class="flex items-center justify-between p-3 bg-white border border-gray-200 rounded-lg transition-shadow group hover:shadow-sm"><div>
-                  <div class="font-bold text-sm text-gray-800">${e.name}</div>
-                  <div class="mt-0.5 text-xs text-gray-500"><i class="fa-solid fa-id-badge mr-1"></i>${e.id || '<span class="text-amber-600">未設定</span>'}</div></div>
+                  <div class="font-bold text-sm text-gray-800">${Utils.escapeHtml(e.name)}</div>
+                  <div class="mt-0.5 text-xs text-gray-500"><i class="fa-solid fa-id-badge mr-1"></i>${Utils.escapeHtml(e.id) || '<span class="text-amber-600">未設定</span>'}</div></div>
                   <div class="flex gap-2 opacity-100 transition-opacity lg:group-hover:opacity-100 lg:opacity-0">
-                  <button onclick="openEditMaintainer('${e.name}')" class="p-1.5 text-blue-600 rounded-md transition-colors hover:bg-blue-50" title="修改資料"><i class="fa-solid fa-pen-to-square"></i></button>
-                  <button onclick="toggleMaintainer('${e.name}')" class="p-1.5 text-amber-600 rounded-md transition-colors hover:bg-amber-50" title="停用"><i class="fa-solid fa-pause"></i></button>
-                  <button onclick="removeMaintainer('${e.name}')" class="p-1.5 text-red-600 rounded-md transition-colors hover:bg-red-50" title="刪除"><i class="fa-solid fa-trash-can"></i></button></div></div>`,
+                  <button data-name="${Utils.escapeHtml(e.name)}" onclick="openEditMaintainer(this.dataset.name)" class="p-1.5 text-blue-600 rounded-md transition-colors hover:bg-blue-50" title="修改資料"><i class="fa-solid fa-pen-to-square"></i></button>
+                  <button data-name="${Utils.escapeHtml(e.name)}" onclick="toggleMaintainer(this.dataset.name)" class="p-1.5 text-amber-600 rounded-md transition-colors hover:bg-amber-50" title="停用"><i class="fa-solid fa-pause"></i></button>
+                  <button data-name="${Utils.escapeHtml(e.name)}" onclick="removeMaintainer(this.dataset.name)" class="p-1.5 text-red-600 rounded-md transition-colors hover:bg-red-50" title="刪除"><i class="fa-solid fa-trash-can"></i></button></div></div>`,
                           )
                           .join("")
                       : '<div class="py-4 text-sm text-center text-gray-400">尚無啟用中的人員</div>'
@@ -7627,12 +7747,12 @@
                        .map(
                          (e) => `
                <div class="flex items-center justify-between p-3 bg-gray-50 border border-gray-200 rounded-lg opacity-75 transition-all group hover:opacity-100"><div>
-               <div class="font-medium text-sm text-gray-500">${e.name}</div>
-               <div class="mt-0.5 text-xs text-gray-400">${e.id || "無工號"}</div></div>
+               <div class="font-medium text-sm text-gray-500">${Utils.escapeHtml(e.name)}</div>
+               <div class="mt-0.5 text-xs text-gray-400">${Utils.escapeHtml(e.id) || "無工號"}</div></div>
                <div class="flex gap-2">
-               <button onclick="openEditMaintainer('${e.name}')" class="p-1.5 text-blue-600 rounded-md transition-colors hover:bg-blue-50" title="修改資料"><i class="fa-solid fa-pen-to-square"></i></button>
-               <button onclick="toggleMaintainer('${e.name}')" class="p-1.5 text-green-600 rounded-md transition-colors hover:bg-green-50" title="啟用"><i class="fa-solid fa-play"></i></button>
-               <button onclick="removeMaintainer('${e.name}')" class="p-1.5 text-red-600 rounded-md transition-colors hover:bg-red-50" title="刪除"><i class="fa-solid fa-trash-can"></i></button></div></div>
+               <button data-name="${Utils.escapeHtml(e.name)}" onclick="openEditMaintainer(this.dataset.name)" class="p-1.5 text-blue-600 rounded-md transition-colors hover:bg-blue-50" title="修改資料"><i class="fa-solid fa-pen-to-square"></i></button>
+               <button data-name="${Utils.escapeHtml(e.name)}" onclick="toggleMaintainer(this.dataset.name)" class="p-1.5 text-green-600 rounded-md transition-colors hover:bg-green-50" title="啟用"><i class="fa-solid fa-play"></i></button>
+               <button data-name="${Utils.escapeHtml(e.name)}" onclick="removeMaintainer(this.dataset.name)" class="p-1.5 text-red-600 rounded-md transition-colors hover:bg-red-50" title="刪除"><i class="fa-solid fa-trash-can"></i></button></div></div>
                `,
                        )
                        .join("")
@@ -7646,17 +7766,14 @@
                <li>啟用中的人員會出現在下拉選單中。</li>
                <li>停用人員後，已有的資料會保留顯示。</li>
                <li>統計報告會自動依據啟用人員生成卡片。</li>
-               <li>工號即為登入帳號與密碼。</li></ul></div></div></div>`;
+               <li>登入帳號為工號；首次登入使用管理員提供的臨時密碼，並須自行修改。</li></ul></div></div></div>`;
       }
       async function saveSettings(toastMsg) {
         const { ID, FILES } = GIST_CONFIG.ECN;
         try {
           const res = await fetch(`${GITHUB_API_BASE}/gists/${ID}`, {
             method: "PATCH",
-            headers: {
-              Authorization: `token ${GITHUB_TOKEN}`,
-              "Content-Type": "application/json",
-            },
+            headers: gistWriteHeaders(),
             body: JSON.stringify({
               files: {
                 [FILES.SETTINGS]: { content: JSON.stringify(settingsData) },
@@ -7739,7 +7856,7 @@
               i = (t, r, o) =>
                 `<div class="flex items-center justify-between px-2 py-2 text-xs border-b border-gray-100 transition-colors group hover:bg-gray-50 last:border-0">
                   <div class="flex items-center gap-2 overflow-hidden">
-                  <span class="${o ? "text-gray-700 font-medium" : "text-gray-400 line-through"} truncate" title="${t.text}">${t.text}</span>
+                  <span class="${o ? "text-gray-700 font-medium" : "text-gray-400 line-through"} truncate" title="${Utils.escapeHtml(t.text)}">${Utils.escapeHtml(t.text)}</span>
                     ${o ? "" : '<span class="px-1.5 text-[10px] text-gray-400 bg-gray-100 rounded">停用</span>'}</div>
                   <div class="flex items-center gap-2 shrink-0 opacity-100 transition-opacity lg:group-hover:opacity-100 lg:opacity-0">
                   <button onclick="toggleDropdownOption('${e.key}', ${r})" class="${o ? "text-amber-600 hover:bg-amber-50" : "text-green-600 hover:bg-green-50"} p-1.5 rounded-md transition-colors" title="${o ? "停用" : "啟用"}"><i class="fa-solid ${o ? "fa-pause" : "fa-play"}"></i></button>
@@ -8596,35 +8713,29 @@
         switchPage(2);
       });
 
+      // 失敗必須往上拋，理由同 loadPcbOverlayFromGist
       async function loadOverlayFromGist() {
-        try {
-          const { ID, PREFIX, FILES } = GIST_CONFIG.ECN;
-          const r = await fetch(`${GITHUB_API_BASE}/gists/${ID}?t=${Date.now()}`, {
-            headers: { Authorization: `token ${GITHUB_TOKEN}` },
-          });
-          if (!r.ok) {
-            console.warn("[loadOverlayFromGist] HTTP " + r.status);
-            return;
+        const { ID, PREFIX, FILES } = GIST_CONFIG.ECN;
+        const r = await fetch(`${GITHUB_API_BASE}/gists/${ID}?t=${Date.now()}`, {
+          headers: { Authorization: `token ${GITHUB_TOKEN}` },
+        });
+        if (!r.ok) throw new Error(`ECN overlay HTTP ${r.status}`);
+        const gist = await r.json();
+        const files = await handleTruncatedFiles(gist.files);
+        // ECN overlay
+        OverlayModule.loadEcnFromArray(YearlyModule.loadAndMerge(files, PREFIX.ECN, null));
+        // settings / holidays
+        if (files[FILES.SETTINGS]) {
+          settingsData = JSON.parse(files[FILES.SETTINGS].content);
+          localStorage.setItem("ec_settings", JSON.stringify(settingsData));
+        }
+        if (files[FILES.HOLIDAYS]) {
+          const hData = JSON.parse(files[FILES.HOLIDAYS].content);
+          if (hData.holidays) {
+            holidayDates = hData.holidays;
+            holidaySet = new Set(holidayDates);
           }
-          const gist = await r.json();
-          const files = await handleTruncatedFiles(gist.files);
-          // ECN overlay
-          OverlayModule.loadEcnFromArray(YearlyModule.loadAndMerge(files, PREFIX.ECN, null));
-          // settings / holidays
-          if (files[FILES.SETTINGS]) {
-            settingsData = JSON.parse(files[FILES.SETTINGS].content);
-            localStorage.setItem("ec_settings", JSON.stringify(settingsData));
-          }
-          if (files[FILES.HOLIDAYS]) {
-            const hData = JSON.parse(files[FILES.HOLIDAYS].content);
-            if (hData.holidays) {
-              holidayDates = hData.holidays;
-              holidaySet = new Set(holidayDates);
-            }
-            if (hData.workdays) workdaySet = new Set(hData.workdays);
-          }
-        } catch (e) {
-          console.error("[loadOverlayFromGist] 讀取失敗", e);
+          if (hData.workdays) workdaySet = new Set(hData.workdays);
         }
       }
 
