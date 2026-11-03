@@ -5,6 +5,8 @@
     <meta content="width=device-width, initial-scale=1.0" name="viewport">
     <title>EC 統計系統</title>
     <link rel="preconnect" href="https://ec-fonts.pages.dev" crossorigin>
+    <!-- 開頁就先在背景建好到 Gist 代理的連線，網址須與 app.js 的 WORKER_URL 一致 -->
+    <link rel="preconnect" href="https://oring-ec.oring-ec.workers.dev" crossorigin>
     <link rel="preload" href="https://ec-fonts.pages.dev/css/all.min.css" as="style">
     <!-- CDN 一律鎖版本，避免上游發佈新版當天全站壞掉 -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -1505,7 +1507,7 @@
         </div>
         <div class="flex gap-3">
           <button class="flex-1 py-2 font-bold text-gray-700 bg-gray-200 rounded-md transition-colors hover:bg-gray-300" onclick="closeLogin()">取消</button>
-          <button class="flex-1 py-2 shadow-md btn-primary" onclick="checkLogin()">登入</button>
+          <button class="flex-1 py-2 shadow-md btn-primary disabled:opacity-60 disabled:cursor-wait" id="loginSubmitBtn" onclick="checkLogin()">登入</button>
         </div>
       </div>
     </div>

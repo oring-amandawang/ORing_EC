@@ -11,6 +11,7 @@
       // USE_WORKER=false：緊急備援，直連 GitHub API，需要在下方 GITHUB_TOKEN 填 token
       // ───────────────────────────────────────────────────────
       const USE_WORKER = true;
+      // 公司網路連 workers.dev 偶爾掉封包；備用代理 https://oring-ec.pages.dev 同程式同 KV，切換時一併改 index.html 的 preconnect
       const WORKER_URL = "https://oring-ec.oring-ec.workers.dev";
       // fallback 用（USE_WORKER=false 時才需要值；平常留空即可）
       const GITHUB_TOKEN = "";
@@ -764,8 +765,7 @@
           this._applyOverride(row, o);
           return row;
         },
-        // PCB id 格式 PNAx-YYYY-MM-NNNN，從中抽年份；這是存檔分片的唯一規則
-        // 完成日（time3）只管排序與顯示，不決定存在哪個檔案
+        // 存檔分片唯一依據序號年份（PNAx-YYYY-MM-NNNN）；完成日 time3 只管排序與顯示
         pcbYearOf(r) {
           const m = (r.id || "").match(/-(\d{4})-/);
           return m ? m[1] : (r.time3 || "").substring(0, 4);
@@ -868,34 +868,6 @@
           return merged;
         },
 
-        // 取得某類型最新的更新時間
-        getLatestTimestamp(prefix, years) {
-          let latest = null;
-          (years || []).forEach((year) => {
-            const key = `${prefix}${year}`;
-            const time = this.fileTimestamps[key];
-            if (time && (!latest || time > latest)) latest = time;
-          });
-          return latest;
-        },
-
-        // 產生分年份儲存的 files 物件
-        buildSaveFiles(data, prefix, dateField, getDateFn = null) {
-          const byYear = this.groupByYear(data, dateField, getDateFn);
-          const files = {};
-          const timestamp = new Date().toISOString();
-          Object.entries(byYear).forEach(([year, records]) => {
-            if (year && year !== "unknown" && records.length > 0) {
-              const fileName = `${prefix}${year}.json`;
-              files[fileName] = {
-                content: JSON.stringify({ _lastUpdated: timestamp, records }),
-              };
-              this.fileTimestamps[`${prefix}${year}`] = new Date(timestamp);
-            }
-          });
-          return files;
-        },
-
         // 追蹤哪些年份有變更
         dirtyYears: {
           ecn: new Set(),
@@ -969,8 +941,7 @@
           dirtyYears.forEach((year) => {
             const records = byYear[year] || [];
             const key = `${prefix}${year}`;
-            // 空陣列只在該年檔案原本就存在時寫回，代表使用者真的把該年刪光，要讓刪除生效
-            // 原本沒有檔案就跳過，避免誤按新增、空白列被清掉後憑空生出空檔案
+            // 空陣列要分辨「刪光」與「誤按新增」，規則見 REFERENCE「空年份的兩種來源」
             if (records.length === 0 && !this.fileTimestamps[key]) return;
             const cleanRecords = records.map(r => {
               const { _dirty, _isNew, _origIdx, _idx, _workDays, _isOverdue, _stage, ...rest } = r;
@@ -1209,8 +1180,7 @@
                 console.log(`[Gist] 已下載完整檔案: ${name} (${Math.round(content.length / 1024)}KB)`);
                 return { name, content };
               } catch (e) {
-                // 必須中斷整個載入：若放行，該年份會以零筆載入，下次儲存就把整年覆蓋成空
-                // 提示交給呼叫端的 catch，這裡再跳一次會變成兩個紅色吐司
+                // 必須中斷整個載入，否則該年以零筆載入後會被存回覆蓋；吐司由呼叫端顯示
                 console.error(`[Gist] 下載 ${name} 失敗:`, e);
                 throw e;
               }
@@ -1337,6 +1307,11 @@
           return format(new Date()).replace(/\//g, '');
         }
 
+        /* Date 物件轉「月/日」，圖表與卡片區間標籤用 */
+        function formatMD(d) {
+          return `${d.getMonth() + 1}/${d.getDate()}`;
+        }
+
         /* 驗證 yyyy/mm/dd 格式是否為合法日期 */
         function isValidDate(d) {
           if (!d) return false;
@@ -1366,6 +1341,7 @@
           formatMonthDisplay,
           calcWorkDays,
           today,
+          formatMD,
           isValidDate,
           normalizeDateStr,
         };
@@ -1652,6 +1628,16 @@
           return (s || "").replace(/[\(（][^)）]*[\)）]/g, "").trim();
         },
 
+        /* 數字陣列平均；空陣列回 null，呼叫端據此分辨「無資料」與 0 */
+        avg(arr) {
+          return arr && arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+        },
+
+        /* 字串去頭尾空白，null／undefined 視為空字串 */
+        trimStr(v) {
+          return (v || "").trim();
+        },
+
         /* 防抖動函式 */
         debounce(fn, delay = 300) {
           let t;
@@ -1659,24 +1645,6 @@
             clearTimeout(t);
             t = setTimeout(() => fn.apply(this, args), delay);
           };
-        },
-
-        /* 帶重試的 Fetch */
-        async fetchWithRetry(url, opts = {}, retries = 3, delay = 1000) {
-          for (let i = 0; i < retries; i++) {
-            try {
-              const res = await fetch(url, opts);
-              if (res.ok) return res;
-              if (res.status >= 500 && i < retries - 1) {
-                await new Promise((r) => setTimeout(r, delay));
-                continue;
-              }
-              return res;
-            } catch (e) {
-              if (i === retries - 1) throw e;
-              await new Promise((r) => setTimeout(r, delay));
-            }
-          }
         },
 
         /* 權限屬性生成 */
@@ -3877,11 +3845,6 @@
 
           // ECN/PCB 走 overlay 格式（只存使用者編輯欄位）；Transfer 純讀不存
           if (i.type === "ecn" || i.type === "pcb_list") {
-            // 標髒依日期欄位，分片依序號年份；兩者不同年時，被改的那筆所在的檔案會漏寫，這裡補標
-            const yearOf = i.type === "ecn" ? (r) => OverlayModule.ecnYearOf(r) : (r) => OverlayModule.pcbYearOf(r);
-            for (const row of p) {
-              if (row && row._dirty) YearlyModule.markDirty(i.type, yearOf(row));
-            }
             const dirtyYears = YearlyModule.getDirtyYears(i.type);
             const overlayFiles = {};
             const overlayKeys = [];
@@ -4102,16 +4065,21 @@
         if (!u) { ToastModule.show("請輸入帳號", "warning"); return; }
         if (!p) { ToastModule.show("請輸入密碼", "warning"); return; }
 
-        // 密碼一律交給 Worker 驗。工號公開在 settings.json，不能當密碼
-        // 直連模式沒有 Worker 可問，而該模式的 Token 本來就寫在原始碼裡，無密碼可守
+        // 不在前端比對（工號公開在 settings.json）；直連模式無 Worker 可問，其 Token 本就在原始碼裡
         if (!USE_WORKER) return finishLogin(u, p);
 
+        // 連 Worker 可能要等數秒；按鈕鎖住同時擋掉 Enter 鍵的重複送出
+        const btn = document.getElementById("loginSubmitBtn");
+        if (btn && btn.disabled) return;
+        if (btn) { btn.disabled = true; btn.textContent = "登入中…"; }
         let res;
         try {
           res = await fetch(`${WORKER_URL}/auth`, { headers: { "X-EC-User": u, "X-EC-Auth": p } });
         } catch (e) {
           ToastModule.show("無法連線驗證服務，請確認網路後再試", "error");
           return;
+        } finally {
+          if (btn) { btn.disabled = false; btn.textContent = "登入"; }
         }
         if (res.status === 429) return ToastModule.show("嘗試次數過多，請 15 分鐘後再試", "error");
         if (!res.ok) {
@@ -4375,7 +4343,7 @@
             const PRESERVE = ['plmStart','plmRelease','complexity','overdueNote'];
             let c = new Map(ecnData.map(e => [e.id, e]));
             let added = 0, updated = 0, unchanged = 0;
-            const ns = v => (v || '').trim();
+            const ns = Utils.trimStr;
             const nb = v => !!v;
 
             for (const r of newEcnData) {
@@ -4466,6 +4434,9 @@
         };
         reader.readAsText(file); input.value = '';
       }
+
+      // ECN 標髒依序號年份，與 OverlayModule.buildEcnByYear 的分片規則一致
+      YearlyModule.getDateFns.ecn = (r) => OverlayModule.ecnYearOf(r);
 
       /* ECN 表格渲染 */
       function renderTable() {
@@ -4902,12 +4873,6 @@
           }, 0),
           updateAuthUI());
       }
-      function updateTransferRow(e, a, r) {
-        const row = transferData[e];
-        if (row) row[a] = r;
-        renderTransferSidebar();
-        renderTransferTable();
-      }
       function switchTransferType(e) {
         let r = document.getElementById("searchBox_p10");
         (r && (r.value = ""), (currentTransferType = e), (paginationState.p10 = 1), (document.getElementById("btnTransECN").className = "ECN" === e ? "btn-primary px-4 py-2 text-sm shadow-inner rounded-l-md" : "bg-white text-gray-600 border border-gray-300 hover:bg-gray-50 px-4 py-2 text-sm rounded-l-md"), (document.getElementById("btnTransECR").className = "ECR" === e ? "btn-primary px-4 py-2 text-sm shadow-inner rounded-r-md" : "bg-white text-gray-600 border border-gray-300 hover:bg-gray-50 px-4 py-2 text-sm rounded-r-md"), renderTransferPage());
@@ -5295,7 +5260,7 @@
               'name13','time13','isRejected13','name15','time15','isRejected15'];
             let p = new Map(pcbStore.list.map(e => [e.id, e]));
             let added = 0, updated = 0, unchanged = 0;
-            const ns = v => (v || '').trim();
+            const ns = Utils.trimStr;
             const nb = v => !!v;
 
             for (const r of newData) {
@@ -5368,6 +5333,8 @@
         }
         return "";
       }
+      // 標髒與存檔依序號年份（申請年）；上面的完成日年份只管排序與年份篩選
+      YearlyModule.getDateFns.pcb_list = (r) => OverlayModule.pcbYearOf(r);
 
       /* PCB 詳細清單 */
       function renderPCBKPITable(e = null) {
@@ -5510,21 +5477,11 @@
       function updatePCBRow(e, t, i) {
         let r = pcbStore.list[e];
         if (r) {
-            if ("id" === t && "" !== i && pcbStore.list.some((o, n) => n !== e && o.id === i)) return (ToastModule.show(`單號 ${i} 重複`, "error"), (r.id = ""), void renderPCBKPITable(null));
-            if (t === "time3" || t === "time2") {
-                let _oldY = YearlyModule.getYear(r, "time3") || String(new Date().getFullYear());
-                YearlyModule.markDirty("pcb_list", _oldY);
-            }
+            // 日期欄正規化後再比，flatpickr 關閉時即使沒選也會把原值回呼一次
+            const norm = (v) => (t.startsWith("updateDate") ? DateUtils.formatDisplay(v) || v : v) || "";
+            if (norm(r[t]) === norm(i)) return;
             r[t] = i;
-            
-            const timeFields = ["time2", "time3", "time7", "time8", "time13", "time15"];
-            if (timeFields.includes(t)) {
-              const rejKey = "isRejected" + t.replace("time", "");
-              if (r[rejKey]) {
-                r[rejKey] = false;
-              }
-            }
-            
+
           let s = (e, t) => {
               if (!e || !t) return "-";
               return DateUtils.calcWorkDays(e, t);
@@ -6720,7 +6677,7 @@
             else if (json.tableRows) newData = json.tableRows;
             else if (json.rows) newData = json.rows;
             else { ToastModule.show('JSON 格式不正確', 'warning'); return; }
-            const ns = v => (v || '').trim();
+            const ns = Utils.trimStr;
             const oldMap = new Map(ecrEcnData.map(r => [r.ecrSerial + '|' + (r.ecnSerial || ''), r]));
             const CMP_FIELDS = [
               'ecrStatusText','ecrApplyTime','ecrStep7Time','ecrApplicant','ecrApplicantDept','ecrSignInfo',
@@ -6859,8 +6816,7 @@
  
       // 趨勢
       function trendMiniCard(label, thisA, lastA, bg, textMain, textLabel, lastColor) {
-        const avg = a => a.length ? a.reduce((x,y)=>x+y,0)/a.length : null;
-        const ta = avg(thisA), la = avg(lastA);
+        const ta = Utils.avg(thisA), la = Utils.avg(lastA);
         let val, left, right;
         if (ta === null && la === null) {
           val = 'N/A'; left = '無資料 (0筆 : 0筆)'; right = '';
@@ -6885,8 +6841,7 @@
 
       // 趨勢比較子文字（供 _monthTrendCard 使用）
       function trendMiniCardSub(thisA, lastA, lastColor) {
-        const avg = a => a.length ? a.reduce((x,y)=>x+y,0)/a.length : null;
-        const ta = avg(thisA), la = avg(lastA);
+        const ta = Utils.avg(thisA), la = Utils.avg(lastA);
         let left, right = '';
         if (ta === null && la === null) {
           left = '無資料 (0筆 : 0筆)';
@@ -6961,7 +6916,7 @@
         for (let m = 1; m <= 12; m++) {
           labels.push(`${m}月`);
           const arr = byMonth[m];
-          data.push(arr.length ? +(arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(1) : null);
+          data.push(arr.length ? +Utils.avg(arr).toFixed(1) : null);
           counts.push(arr.length);
         }
         return { labels, data, counts };
@@ -6988,14 +6943,13 @@
         const labels = [], tooltipLabels = [], data = [], counts = [];
         let wNum = 0;
         weeks.forEach((w) => {
-          const fmtD = d => `${d.getMonth()+1}/${d.getDate()}`;
-          const rangeStr = `${fmtD(w.start)} ~ ${fmtD(w.end)}`;
+          const rangeStr = `${DateUtils.formatMD(w.start)} ~ ${DateUtils.formatMD(w.end)}`;
           if (w.start.getMonth() !== m) return;
           const tag = `W${++wNum}`;
           labels.push(tag);
           tooltipLabels.push(`${tag}  ${rangeStr}`);
           const arr = compItems.filter(item => item.d >= w.start && item.d <= w.end).map(item => item.dur);
-          data.push(arr.length ? +(arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(1) : null);
+          data.push(arr.length ? +Utils.avg(arr).toFixed(1) : null);
           counts.push(arr.length);
         });
         return { labels, tooltipLabels, data, counts };
@@ -7131,7 +7085,7 @@
         const tw = getWeekRange(now), lw = getWeekRange(new Date(now.getTime()-7*864e5));
         const tm = getMonthRange(now.getFullYear(), now.getMonth());
         const pm = now.getMonth()===0 ? getMonthRange(now.getFullYear()-1,11) : getMonthRange(now.getFullYear(),now.getMonth()-1);
-        const fmtD = d => `${d.getMonth()+1}/${d.getDate()}`;
+        const fmtD = DateUtils.formatMD;
         const twLabel = `${fmtD(tw.start)} - ${fmtD(tw.end)}`, tmLabel = `${fmtD(tm.start)} - ${fmtD(tm.end)}`;
         const inR = (items, range) => items.filter(i=>i.d>=range.start&&i.d<=range.end).map(i=>i.dur);
  
@@ -7254,10 +7208,6 @@
       // ===== P20 月報摘要 =====
       // 入口：showMonthlyReportModal / renderMonthlyReport / copyMonthlyReportSummary / copyMonthlyReportDetail
       function _mrPct(n, d) { return d ? Math.round(n / d * 100) : 0; }
-      function _mrAvg(arr) {
-        if (!arr.length) return null;
-        return arr.reduce((a,b)=>a+b,0) / arr.length;
-      }
       function _mrParseYM(ym) {
         const [y, m] = ym.split('-').map(Number);
         return { y, m };
@@ -7310,10 +7260,10 @@
           }
         }
         const yearBuckets = Object.keys(yearG).map(Number).sort().map(yy => ({
-          key: `y${yy}`, label: `${yy} 年`, count: yearG[yy].length, avg: _mrAvg(yearG[yy]),
+          key: `y${yy}`, label: `${yy} 年`, count: yearG[yy].length, avg: Utils.avg(yearG[yy]),
         }));
         const monthBuckets = Object.keys(monthG).map(Number).sort((a,b)=>a-b).map(mm => ({
-          key: `m${mm}`, label: `${mm} 月`, count: monthG[mm].length, avg: _mrAvg(monthG[mm]),
+          key: `m${mm}`, label: `${mm} 月`, count: monthG[mm].length, avg: Utils.avg(monthG[mm]),
         }));
         return { yearBuckets, monthBuckets };
       }
@@ -7361,10 +7311,10 @@
         const ecnPrev = _mrFilterClosed(ecns, 'ecnStep2Time', prevRange);
 
         const durs = (arr, f) => arr.map(r => parseFloat(r[f])).filter(n => !isNaN(n) && n > 0);
-        const ecrThisAvg = _mrAvg(durs(ecrThis, 'ecrDuration'));
-        const ecrPrevAvg = _mrAvg(durs(ecrPrev, 'ecrDuration'));
-        const ecnThisAvg = _mrAvg(durs(ecnThis, 'ecnDuration'));
-        const ecnPrevAvg = _mrAvg(durs(ecnPrev, 'ecnDuration'));
+        const ecrThisAvg = Utils.avg(durs(ecrThis, 'ecrDuration'));
+        const ecrPrevAvg = Utils.avg(durs(ecrPrev, 'ecrDuration'));
+        const ecnThisAvg = Utils.avg(durs(ecnThis, 'ecnDuration'));
+        const ecnPrevAvg = Utils.avg(durs(ecnPrev, 'ecnDuration'));
 
         const buildSection = (closed, applyField, durField, thisAvg, sectionYM) => {
           if (!closed.length) return null;
