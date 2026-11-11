@@ -7,7 +7,8 @@
     <link rel="preconnect" href="https://ec-fonts.pages.dev" crossorigin>
     <!-- 開頁就先在背景建好到 Gist 代理的連線，網址須與 app.js 的 WORKER_URL 一致 -->
     <link rel="preconnect" href="https://oring-ec.oring-ec.workers.dev" crossorigin>
-    <link rel="preload" href="https://ec-fonts.pages.dev/css/all.min.css" as="style">
+    <!-- 網址後面的版本號要跟著 ec-fonts 站台的 Font Awesome 版本改，否則瀏覽器會繼續用暫存的舊樣式；兩行要一致 -->
+    <link rel="preload" href="https://ec-fonts.pages.dev/css/all.min.css?v=7.3.1" as="style">
     <!-- CDN 一律鎖版本，避免上游發佈新版當天全站壞掉 -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.6.1"></script>
@@ -30,10 +31,13 @@
         },
       };
     </script>
-    <link rel="stylesheet" href="https://ec-fonts.pages.dev/css/all.min.css">
+    <link rel="stylesheet" href="https://ec-fonts.pages.dev/css/all.min.css?v=7.3.1">
 
     <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/l10n/zh-tw.js"></script>
+    <!-- 筆記分頁：Markdown 轉 HTML 與過濾危險內容 -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
     <style>
       :root {
         --ms-blue: #0078d4;
@@ -77,6 +81,44 @@
 
       /* 權限控制 */
       .auth-only { display: none !important; }
+
+      /* ===== 筆記 (Page 21) ===== */
+      @keyframes noteFade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+      .note-fade { animation: noteFade .2s ease-out; }
+      /* Tailwind 會清掉標題與清單的預設樣式，Markdown 內容需要補回 */
+      .note-md h1, .note-md h2, .note-md h3 { font-weight: 700; margin: .75rem 0 .25rem; }
+      .note-md h1 { font-size: 1.2rem; } .note-md h2 { font-size: 1.1rem; } .note-md h3 { font-size: 1rem; }
+      .note-md p { margin: .25rem 0; }
+      .note-md ul { list-style: disc; padding-left: 1.5rem; }
+      .note-md ol { list-style: decimal; padding-left: 1.5rem; }
+      .note-md a { color: #0078d4; }
+      .note-md a:hover { text-decoration: underline; }
+      /* 字級跟著周圍文字走（1em）；縮小的話套了「小」字級的程式碼會小到看不清楚 */
+      .note-md code { background: #fff; border: 1px solid #e1dfdd; padding: .05rem .35rem; border-radius: .25rem; font-size: 1em; }
+      .note-md pre { background: #fff; border: 1px solid #e1dfdd; padding: .75rem; border-radius: .375rem; overflow-x: auto; }
+      .note-md pre code { background: none; border: 0; padding: 0; }
+      /* 附件連結一律顯示成檔案區塊，編輯時與張貼後同一個樣子；圖示依副檔名決定，沒列到的用一般檔案圖示 */
+      /* 圖示的字型名稱與編碼跟著 ec-fonts 站台的 Font Awesome 版本走，換大版本時這裡要一起改 */
+      .note-md a[href^="files/"] { display: inline-block; max-width: 20rem; margin: .25rem .5rem .25rem 0; padding: .5rem .75rem; overflow: hidden; vertical-align: middle; color: #1f2937; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: .375rem; cursor: pointer; }
+      .note-md a[href^="files/"]:hover { text-decoration: none; background: #f3f4f6; }
+      .note-md a[href^="files/"]::before { content: "\f15b"; margin-right: .5rem; font: 900 1.125rem "Font Awesome 7 Pro"; color: #6b7280; vertical-align: -.1em; }
+      .note-md a[href^="files/"]:is([href$=".xls" i], [href$=".xlsx" i], [href$=".xlsm" i], [href$=".csv" i])::before { content: "\f1c3"; color: #107c41; }
+      .note-md a[href^="files/"]:is([href$=".doc" i], [href$=".docx" i])::before { content: "\f1c2"; color: #185abd; }
+      .note-md a[href^="files/"]:is([href$=".ppt" i], [href$=".pptx" i])::before { content: "\f1c4"; color: #c43e1c; }
+      .note-md a[href^="files/"][href$=".pdf" i]::before { content: "\f1c1"; color: #b30c01; }
+      .note-md a[href^="files/"][href$=".txt" i]::before { content: "\e8c6"; }
+      .note-md a[href^="files/"]:is([href$=".html" i], [href$=".htm" i])::before { content: "\e83d"; }
+      .note-md a[href^="files/"]:is([href$=".zip" i], [href$=".rar" i], [href$=".7z" i])::before { content: "\e5ee"; }
+      /* roosterjs 表格的「＋」把手是照瀏覽器預設的尺寸算法畫的，Tailwind 把全站改成另一種算法後會歪掉，這裡改回來 */
+      #horizontalInserter, #verticalInserter { box-sizing: content-box; }
+      /* 顯示時程式碼區塊外層已有框與行號，內層不再重複 */
+      .note-md .note-code pre { flex: 1; margin: 0; padding: .5rem .75rem .5rem 0; border: 0; border-radius: 0; overflow: visible; font: inherit; }
+      .note-md blockquote { border-left: 3px solid #0078d4; padding-left: .75rem; color: #605e5c; }
+      .note-md table { border-collapse: collapse; margin: .5rem 0; }
+      .note-md th, .note-md td { border: 1px solid #e1dfdd; padding: .25rem .6rem; }
+      .note-md th { background: #faf9f8; }
+      .note-md img { max-width: 100%; border-radius: .5rem; border: 1px solid #e1dfdd; margin: .5rem 0; }
+      .note-md hr { margin: .75rem 0; border-color: #e1dfdd; }
 
       /* 表頭欄位拖曳排序 */
       thead th[data-column-id] { transition: background-color 0.15s; }
@@ -255,6 +297,8 @@
                 <span class="w-6 mr-3 text-center"><i class="fa-solid fa-square-caret-down"></i></span>選項設定</a>
             </div>
           </div>
+          <!-- 筆記固定排在最後，登入後出現的設定選單要在它左邊 -->
+          <button class="flex items-center h-full px-5 font-medium transition-colors hover:bg-ms-dark" onclick="switchPage(21)" aria-label="筆記"><i class="fa-solid fa-square-pen fa-xl"></i></button>
         </div>
       </div>
       <!-- 登入按鈕區域 -->
@@ -1488,6 +1532,10 @@
           </div>
         </div>
       </div>
+      <!-- ========== PAGE21 筆記（內容由 note.js 產生） ========== -->
+      <div class="h-full page" id="page21">
+        <div class="h-full" id="noteRoot"></div>
+      </div>
     </div>
     <!-- 登入視窗 -->
     <div class="fixed inset-0 z-[10000] flex hidden items-center justify-center bg-gray-900 bg-opacity-60 backdrop-blur-sm" id="loginModal">
@@ -1550,6 +1598,15 @@
         <div class="mb-6">
           <label class="block mb-2 font-semibold text-sm text-gray-700">工號 (登入帳號)</label>
           <input class="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:border-ms-blue focus:ring-2 focus:ring-ms-blue" id="editIdInput" placeholder="請輸入工號" type="text" />
+        </div>
+        <div class="mb-6">
+          <label class="block mb-2 font-semibold text-sm text-gray-700" for="editColorInput">筆記代表色</label>
+          <!-- data-auto 為 1 代表沒有指定，筆記會依工號自動配色 -->
+          <div class="flex items-center gap-3">
+            <input class="w-12 h-9 p-0.5 bg-white border border-gray-300 rounded-lg cursor-pointer" id="editColorInput" type="color" oninput="this.dataset.auto='';document.getElementById('editColorHint').textContent='自訂顏色'" />
+            <span class="text-sm text-gray-500" id="editColorHint"></span>
+            <button class="ml-auto text-sm text-ms-blue hover:underline" type="button" onclick="const c=document.getElementById('editColorInput');c.dataset.auto='1';document.getElementById('editColorHint').textContent='自動（依工號配色）'">改回自動</button>
+          </div>
         </div>
         <div class="flex gap-3">
           <button class="flex-1 py-2 font-bold text-gray-700 bg-gray-200 rounded-md transition-colors hover:bg-gray-300" onclick="document.getElementById('editMaintainerModal').classList.add('hidden')">取消</button>
@@ -1797,5 +1854,7 @@
     </div>
     <div class="shrink-0 py-1.5 text-center text-[10px] text-gray-300 border-gray-100 select-none">© ORing / Amanda Wang</div>
     <script src="./app.js"></script>
+    <!-- 筆記模組用到 app.js 的全域變數，必須排在後面 -->
+    <script src="./note.js"></script>
   </body>
 </html>

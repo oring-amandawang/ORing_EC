@@ -3330,6 +3330,9 @@
           let t = JSON.parse(a),
             e = t.timestamp || 0,
             s = Date.now() - e;
+          // ec_settings 每次存設定與同步都會更新，比 ec_all_cache 裡那份新；優先用它，剛改的設定重新整理後才不會退回舊的
+          let fresh = null;
+          try { fresh = JSON.parse(localStorage.getItem("ec_settings")); } catch {}
           return (
             (ecnData = t.ecnData || []),
             (transferData = t.transferData || []),
@@ -3341,7 +3344,7 @@
             (bomData = t.bomData || []),
             (dccData = t.dccData || []),
             (ecrEcnData = t.ecrEcnData || []),
-            t.settingsData && (settingsData = t.settingsData),
+            (fresh || t.settingsData) && (settingsData = fresh || t.settingsData),
             t.yearlyTimestamps &&
               Object.entries(t.yearlyTimestamps).forEach(([a, t]) => {
                 YearlyModule.fileTimestamps[a] = t ? new Date(t) : null;
@@ -3561,6 +3564,8 @@
 
       /* 手動重新整理 */
       function manualRefresh() {
+        // 筆記讀的是本機資料夾，不走 Gist 同步也不受冷卻時間限制
+        if (document.querySelector("#page21.active")) return NoteModule.reload();
         if (lastSyncTime) {
           let e = Date.now() - lastSyncTime.getTime();
           if (e < SYNC_COOLDOWN) {
@@ -4308,6 +4313,9 @@
             break;
           case 20:
             renderEcrEcnPage();
+            break;
+          case 21:
+            NoteModule.open();
             break;
         }
       }
@@ -7767,6 +7775,11 @@
         document.getElementById("editOriginalName").value = person.name;
         document.getElementById("editNameInput").value = person.name;
         document.getElementById("editIdInput").value = person.id || "";
+        // 筆記代表色：沒指定時顏色欄只是放個預設值，實際由筆記依工號自動配色
+        const color = document.getElementById("editColorInput");
+        color.value = person.color || "#0078d4";
+        color.dataset.auto = person.color ? "" : "1";
+        document.getElementById("editColorHint").textContent = person.color ? "自訂顏色" : "自動（依工號配色）";
         document.getElementById("editMaintainerModal").classList.remove("hidden");
       }
       async function saveMaintainerEdit() {
@@ -7778,8 +7791,15 @@
         }
         const personIndex = settingsData.maintainers.findIndex((m) => m.name === targetName);
         if (personIndex !== -1) {
-          settingsData.maintainers[personIndex].id = newId;
+          const person = settingsData.maintainers[personIndex];
+          const colorInput = document.getElementById("editColorInput");
+          const newColor = colorInput.dataset.auto ? "" : colorInput.value;
           document.getElementById("editMaintainerModal").classList.add("hidden");
+          // 沒有任何變更就不寫 Gist
+          if ((person.id || "") === (newId || "") && (person.color || "") === newColor) return;
+          person.id = newId;
+          if (newColor) person.color = newColor;
+          else delete person.color;
           await saveSettings(`已更新 ${targetName} 的資料`);
         }
       }
