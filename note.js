@@ -88,7 +88,8 @@ const NoteModule = (() => {
   /* 貼文時間：沿用小幫手的日期與時間寫法，一律帶年份 */
   function fmt(t) {
     const d = new Date(t);
-    return DateUtils.format(d) + " " + formatTime(d);
+    // formatTime 是全站共用的，上午／下午後面的空格只在筆記這裡補
+    return DateUtils.format(d) + " " + formatTime(d).replace(/^(上午|下午)/, "$1 ");
   }
 
   /* 姓名旁細線的顏色：人員設定裡有指定就用指定的，沒有就依工號固定配一色 */
@@ -236,7 +237,7 @@ const NoteModule = (() => {
       box.querySelectorAll(".note-md img[data-file]").forEach((img) => {
         fileUrl(b, nameOf(img, "data-file")).then((u) => (img.src = u)).catch(() => {});
         img.classList.add("cursor-zoom-in");
-        img.onclick = () => zoom(img.src);
+        img.onclick = () => zoom(img.src, [...img.closest(".note-md").querySelectorAll("img[data-file]")].map((x) => x.src));
       });
       box.querySelectorAll('.note-md a[href^="files/"]').forEach((a) => {
         const name = nameOf(a, "href");
@@ -484,11 +485,14 @@ const NoteModule = (() => {
   function formHtml(k, p, onSave, onCancel) {
     return `
     <div ${p._book ? `data-book="${p._book}"` : ""} class="bg-white border border-gray-200 rounded-lg shadow-md note-fade">
+      <!-- 主旨與工具列釘在捲動區上緣，貼文很長時不必捲回最上面才能用格式 -->
+      <div class="sticky top-0 z-20 bg-white rounded-t-lg">
       <div id="${k}_head" class="${p.announce ? ANN_ON : ANN_OFF}" style="${p.announce ? `background:${annBg(annColor(p.announceColor))}` : ""}">
         <input id="${k}_title" value="${esc(p.title)}" placeholder="新增主旨" aria-label="主旨" class="w-full font-bold text-lg bg-transparent outline-none placeholder:text-current placeholder:opacity-50">
       </div>
       <div class="flex flex-wrap items-center gap-0.5 px-3 py-1 border-y border-gray-100">${toolbarHtml(k)}</div>
-      <div id="${k}_body" aria-label="內容" ondragover="if(event.dataTransfer.types.includes('Files'))event.preventDefault()" ondrop="NoteModule.drop(event,'${k}')" class="relative note-md px-4 py-3 text-sm leading-relaxed text-gray-800 outline-none" style="min-height:6rem"></div>
+      </div>
+      <div id="${k}_body" aria-label="內容" ondragover="if(event.dataTransfer.types.includes('Files'))event.preventDefault()" ondrop="NoteModule.drop(event,'${k}')" class="relative note-md overflow-y-auto px-4 py-3 text-sm leading-relaxed text-gray-800 outline-none" style="min-height:6rem;max-height:50vh"></div>
       <div class="flex items-center gap-2 px-3 py-2 bg-gray-50 border-t border-gray-100 rounded-b-lg">
         <button id="${k}_attachBtn" title="附加檔案" aria-label="附加檔案" onclick="NoteModule.attach('${k}')" class="${ICON_BTN} disabled:opacity-50 disabled:cursor-wait"><i class="fa-solid fa-paperclip"></i></button>
         <label class="cursor-pointer">
@@ -736,6 +740,21 @@ const NoteModule = (() => {
     return !!prev && prev.tagName === "CODE";
   }
 
+  /* 套用或清除螢光標示 */
+  function setMark(ed, color) {
+    const sel = ed.getDOMSelection();
+    // 游標沒有選取範圍時交給 roosterjs，讓接著打的字帶上螢光
+    if (!sel || sel.type !== "range" || sel.range.collapsed) return roosterjs.setBackgroundColor(ed, color || null);
+    // 有選取範圍時自己改：roosterjs 設完底色會把選取收起來，接著想再改文字顏色就得重選一次
+    ed.formatContentModel((model) => {
+      for (const x of roosterjs.getSelectedSegments(model, false, true)) {
+        if (color) x.format.backgroundColor = color;
+        else delete x.format.backgroundColor;
+      }
+      return true;
+    });
+  }
+
   /* 工具列指令 */
   function cmd(k, name, arg) {
     const ed = S.eds[k], R = roosterjs;
@@ -778,16 +797,15 @@ const NoteModule = (() => {
       bold: () => R.toggleBold(ed), italic: () => R.toggleItalic(ed), underline: () => R.toggleUnderline(ed), strike: () => R.toggleStrikethrough(ed),
       ul: () => R.toggleBullet(ed), ol: () => R.toggleNumbering(ed),
       // 行內程式碼本身有底色和外框，再加螢光會很亂
-      mark: () => (arg && touchesCode(ed) ? ToastModule.show("行內程式碼不能加螢光標示", "warning") : R.setBackgroundColor(ed, arg || null)),
+      mark: () => (arg && touchesCode(ed) ? ToastModule.show("行內程式碼不能加螢光標示", "warning") : setMark(ed, arg)),
       color: () => R.setTextColor(ed, arg || null),
       heading: () => R.setHeadingLevel(ed, +arg), size: () => R.setFontSize(ed, arg),
       quote: () => R.toggleBlockQuote(ed, QUOTE_FORMAT),
       code: () => {
         const sel = ed.getDOMSelection();
         if (sel && sel.type === "range" && !sel.range.collapsed) {
-          // 清螢光要放在後面：roosterjs 設完底色會把選取範圍收起來，先做的話就沒有東西可以轉成程式碼
-          R.toggleCode(ed);
-          return R.setBackgroundColor(ed, null);
+          setMark(ed, "");
+          return R.toggleCode(ed);
         }
         // 沒選取文字時放一個空的程式碼框；空元素放不了游標，所以塞一個零寬空白，存檔時清掉
         insertAndEnter("<code>\u200b</code>&nbsp;");
@@ -884,21 +902,38 @@ const NoteModule = (() => {
         ${isLoggedIn ? `<button title="筆記本設定" aria-label="筆記本設定" onclick="NoteModule.bookDialog('${b.key}')" class="opacity-0 group-hover/book:opacity-100 focus:opacity-100 ${ICON_BTN}"><i class="fa-solid fa-ellipsis"></i></button>` : `<span class="h-8"></span>`}
       </div>
       <div class="space-y-0.5">
-        ${b.channels.map((c) => {
+        <div class="space-y-0.5" data-channels="${b.key}">${b.channels.map((c) => {
           const on = b.key === S.book && c.id === S.channel;
           return `
-        <div class="group/ch flex items-center pr-1 rounded-lg transition-colors ${on ? "bg-white shadow-sm" : "hover:bg-white/60"}">
+        <div data-ch="${c.id}" class="group/ch flex items-center pr-1 rounded-lg transition-colors ${on ? "bg-white shadow-sm" : "hover:bg-white/60"}">
           <button onclick="NoteModule.select('${b.key}','${c.id}')" class="flex items-center gap-3 flex-1 min-w-0 py-2 pl-5 pr-3 text-left">
             <span class="text-xl leading-none">${esc(c.emoji || CH_EMOJI)}</span>
             <span class="truncate text-sm ${on ? "font-semibold text-gray-900" : "text-gray-700"}">${esc(c.name)}</span>
           </button>
           ${isLoggedIn ? `<button title="頻道設定" aria-label="頻道設定" onclick="NoteModule.channelDialog('${b.key}','${c.id}')" class="opacity-0 group-hover/ch:opacity-100 focus:opacity-100 ${ICON_BTN}"><i class="fa-solid fa-ellipsis"></i></button>` : ""}
         </div>`;
-        }).join("")}
+        }).join("")}</div>
         ${isLoggedIn ? `<button onclick="NoteModule.channelDialog('${b.key}')" class="flex items-center gap-3 w-full py-1.5 pl-6 pr-3 text-sm text-left text-gray-500 rounded-lg transition-colors hover:text-ms-blue hover:bg-white/60"><i class="fa-solid fa-plus w-5 text-center text-xs"></i>新增頻道</button>
         <button onclick="NoteModule.select('${b.key}','${TRASH}')" class="flex items-center gap-3 w-full py-1.5 pl-6 pr-3 text-sm text-left rounded-lg transition-colors ${b.key === S.book && S.channel === TRASH ? "font-semibold text-gray-900 bg-white shadow-sm" : "text-gray-500 hover:text-ms-blue hover:bg-white/60"}"><i class="fa-solid fa-trash-can w-5 text-center text-xs"></i>垃圾桶</button>` : ""}
       </div>`;
     }).join("");
+    // 頻道可拖曳排序：沿用小幫手已載入的 Sortable（表格欄位排序用的同一個套件）
+    if (!isLoggedIn || typeof Sortable === "undefined") return;
+    $("noteSidebar").querySelectorAll("[data-channels]").forEach((list) => {
+      new Sortable(list, { animation: 150, onEnd: safe(() => reorder(list.dataset.channels, [...list.children].map((x) => x.dataset.ch))) });
+    });
+  }
+
+  /* 拖曳後的頻道順序寫回 channels.json */
+  async function reorder(key, ids) {
+    if (!isLoggedIn) return;
+    const b = bookOf(key);
+    // 先重讀再寫；別人剛新增、這邊畫面上還沒有的頻道排到最後，不能被這次存檔弄丟
+    const list = (await readJson(b.handle, "channels.json", b.channels)).filter((c) => c && SAFE_ID.test(c.id));
+    const sorted = [...ids.map((id) => list.find((c) => c.id === id)).filter(Boolean), ...list.filter((c) => !ids.includes(c.id))];
+    if (!sorted.every((c, i) => c === list[i])) await writeFile(b.handle, "channels.json", JSON.stringify(sorted));
+    b.channels = sorted;
+    renderSidebar();
   }
 
   async function renderList() {
@@ -954,7 +989,7 @@ const NoteModule = (() => {
     const b = bookOf(p._book);
     const can = isLoggedIn && !p._trash;
     const actions = !isLoggedIn ? "" : p._trash ? `
-          <div class="flex gap-2">
+          <div class="flex gap-2 shrink-0 whitespace-nowrap">
             <button onclick="NoteModule.restore('${k}')" class="px-3 py-1 text-sm text-ms-blue border border-gray-200 rounded-md transition-colors hover:bg-gray-50">還原</button>
             <button onclick="NoteModule.purge('${k}')" class="px-3 py-1 text-sm text-red-600 border border-gray-200 rounded-md transition-colors hover:bg-red-50">永久刪除</button>
           </div>` : `
@@ -1062,24 +1097,38 @@ const NoteModule = (() => {
     if (o.editable) $("noteDlgName").focus();
   }
 
+  let zoomList = [];
+
   /* 圖片放大檢視：點圖片切換大小、滾輪縮放、放大後可拖曳；點圖片以外或按 Esc 關閉 */
   // 圖片用 m-auto 置中而不是 items-center：後者在圖片比視窗大時，上緣和左緣會捲不到
-  function zoom(src) {
+  // list 是同一則內容裡的所有圖片；兩張以上時下方出現縮圖列，可點縮圖或按左右鍵換圖
+  function zoom(src, list = zoomList) {
+    zoomList = list;
+    const many = list.length > 1;
     $("noteDialog").innerHTML = `
-    <div class="fixed inset-0 z-[70] overflow-auto bg-black/70 note-fade" role="dialog" aria-label="圖片放大檢視" tabindex="-1" onclick="if(event.target.tagName!=='IMG')NoteModule.closeDialog()" onkeydown="if(event.key==='Escape')NoteModule.closeDialog()">
-      <div class="flex w-max min-w-full min-h-full p-6">
+    <div class="fixed inset-0 z-[70] overflow-auto bg-black/70 ${$("noteDialog").firstElementChild ? "" : "note-fade"}" role="dialog" aria-label="圖片放大檢視" tabindex="-1" onclick="if(event.target.tagName!=='IMG')NoteModule.closeDialog()">
+      <div class="flex w-max min-w-full min-h-full p-6 ${many ? "pb-24" : ""}">
         <img src="${esc(src)}" alt="" draggable="false" class="m-auto bg-white rounded shadow-2xl cursor-zoom-in" onpointerdown="NoteModule.zoomDrag(event)" onclick="if(this.dataset.dragged){this.dataset.dragged='';return}NoteModule.zoomTo(this, this.style.width ? 0 : Math.max(this.naturalWidth, this.getBoundingClientRect().width * 2))" onwheel="event.preventDefault();NoteModule.zoomTo(this, this.getBoundingClientRect().width * (event.deltaY < 0 ? 1.25 : 0.8))">
       </div>
-      <div class="fixed bottom-4 left-1/2 px-3 py-1 text-xs text-white bg-black/60 rounded-full -translate-x-1/2 pointer-events-none">點圖片放大或還原，滾輪縮放，放大後可拖曳，Esc 關閉</div>
+      ${many ? `<div data-thumbs class="fixed bottom-4 left-1/2 flex gap-2 max-w-[90vw] p-2 overflow-x-auto bg-black/60 rounded-lg -translate-x-1/2" onclick="event.stopPropagation()">
+        ${list.map((u) => `<img src="${esc(u)}" alt="" onclick="NoteModule.zoom(this.src)" class="shrink-0 w-14 h-14 object-cover bg-white rounded cursor-pointer border-2 ${u === src ? "border-ms-blue" : "border-transparent opacity-60 hover:opacity-100"}">`).join("")}
+      </div>` : ""}
     </div>`;
-    zoomTo($("noteDialog").querySelector("img"), 0);
-    $("noteDialog").firstElementChild.focus();
+    const box = $("noteDialog").firstElementChild;
+    box.onkeydown = (e) => {
+      const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key], next = list[list.indexOf(src) + step];
+      if (e.key === "Escape") closeDialog();
+      else if (next) zoom(next);
+    };
+    zoomTo(box.querySelector("img"), 0);
+    box.focus();
   }
 
   /* 設定放大檢視的圖片寬度；0 代表符合視窗 */
   function zoomTo(img, width) {
     img.style.maxWidth = width ? "none" : "calc(100vw - 3rem)";
-    img.style.maxHeight = width ? "none" : "calc(100vh - 3rem)";
+    // 有縮圖列時多留下方空間，圖片才不會被縮圖蓋住
+    img.style.maxHeight = width ? "none" : `calc(100vh - ${img.closest("[role=dialog]").querySelector("[data-thumbs]") ? 7.5 : 3}rem)`;
     img.style.width = width ? Math.max(50, Math.round(width)) + "px" : "";
     img.classList.toggle("cursor-zoom-in", !width);
     img.classList.toggle("cursor-grab", !!width);
@@ -1284,7 +1333,11 @@ const NoteModule = (() => {
       // 寫檔成功後才關編輯器；先關的話寫檔失敗（例如公槽斷線）時剛改的內容就沒了
       const close = () => { closeEditor("noteEdit"); S.editing = null; };
       if (old.title === title && body === S.editBase && !!old.announce === announce && annColor(old.announceColor) === announceColor) { close(); return renderList(); }
+      const before = filesIn(old);
       await updatePost(id, (p) => Object.assign(p, { title, body, format: "html", announce, announceColor, edited: true, editedAt: Date.now() }), close);
+      // 編輯時拿掉的圖片、附件順手清掉；清不掉只是多留一個檔，不影響已存好的貼文
+      const now = S.posts.get(id), gone = now ? before.filter((n) => !filesIn(now).includes(n)) : [];
+      if (gone.length) await removeUnused(bookOf(old._book), gone).catch(() => {});
     });
   }
 
@@ -1313,21 +1366,30 @@ const NoteModule = (() => {
     await renderList();
   }
 
+  /* 貼文與回覆用到的圖片、附件檔名 */
+  function filesIn(p) {
+    const t = document.createElement("template");
+    t.innerHTML = bodyHtml(p) + p.replies.map((r) => md(r.body)).join("");
+    return [...t.content.querySelectorAll('[src^="files/"], [href^="files/"]')].map((x) => decodeURIComponent((x.getAttribute("src") || x.getAttribute("href")).slice(6)));
+  }
+
+  /* 刪掉沒有任何貼文在用的檔案；skip 是即將刪除、不算在內的那一篇 */
+  async function removeUnused(b, names, skip) {
+    // 在編輯器裡複製圖片貼到別篇時兩篇會共用同一個檔，別篇（含垃圾桶）還在用的不能刪
+    await loadAll();
+    await loadPosts(b, TRASH, await listNames(b, TRASH));
+    const others = [...S.posts.values()].filter((x) => x !== skip && x._book === b.key).map((x) => x.body + x.replies.map((r) => r.body).join("\n")).join("\n");
+    for (const name of new Set(names)) {
+      if (others.includes("files/" + name)) continue;
+      try { await b.filesDir.removeEntry(name); } catch (e) { if (e.name !== "NotFoundError") throw e; }
+    }
+  }
+
   /* 永久刪除：連同貼文與回覆用到的圖片、附件檔一起刪 */
   async function purge(id) {
     if (!isLoggedIn || !confirm("永久刪除這篇貼文和它的圖片、附件？\n刪除後無法復原")) return;
     const p = S.posts.get(id), b = bookOf(p._book);
-    const t = document.createElement("template");
-    t.innerHTML = bodyHtml(p) + p.replies.map((r) => md(r.body)).join("");
-    const used = [...t.content.querySelectorAll('[src^="files/"], [href^="files/"]')].map((x) => decodeURIComponent((x.getAttribute("src") || x.getAttribute("href")).slice(6)));
-    // 在編輯器裡複製圖片貼到別篇時兩篇會共用同一個檔，別篇還在用的不能刪
-    await loadAll();
-    await loadPosts(b, TRASH, await listNames(b, TRASH));
-    const others = [...S.posts.values()].filter((x) => x !== p && x._book === b.key).map((x) => x.body + x.replies.map((r) => r.body).join("\n")).join("\n");
-    for (const name of new Set(used)) {
-      if (others.includes("files/" + name)) continue;
-      try { await b.filesDir.removeEntry(name); } catch (e) { if (e.name !== "NotFoundError") throw e; }
-    }
+    await removeUnused(b, filesIn(p), p);
     await b.trashDir.removeEntry(p.id + ".json");
     S.posts.delete(id);
     S.names[namesKey(b, TRASH)] = null;
@@ -1429,9 +1491,9 @@ const NoteModule = (() => {
     };
   }
 
-  const api = { open, reload, refresh,addBook, addBookHandle, grant, saveBook, removeBook, select, more, saveChannel, deleteChannel, compose, post, edit, cancelEdit, saveEdit, remove, restore, purge, reply, removeReply, toggleReplies, addFiles, attachFiles };
+  const api = { open, reload, refresh, addBook, addBookHandle, grant, saveBook, removeBook, select, more, saveChannel, deleteChannel, reorder,compose, post, edit, cancelEdit, saveEdit, remove, restore, purge, reply, removeReply, toggleReplies, addFiles, attachFiles };
   return {
     ...Object.fromEntries(Object.entries(api).map(([k, fn]) => [k, safe(fn)])),
-    search, hasDraft, cancelCompose, annStyle, cmd, zoomTo, zoomDrag, drop, toggleMore, bookDialog, channelDialog, closeDialog, paste, attach,
+    search, hasDraft, cancelCompose, annStyle, cmd, zoom, zoomTo, zoomDrag, drop, toggleMore, bookDialog, channelDialog, closeDialog, paste, attach,
   };
 })();

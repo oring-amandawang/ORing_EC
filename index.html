@@ -84,6 +84,9 @@
 
       /* ===== 筆記 (Page 21) ===== */
       .note-fade { animation: fadeIn .2s ease-out; }
+      /* 筆記頁自己有捲軸，外層不再捲動，否則整個筆記區會被往上推、下方留白 */
+      /* min-height 要一起設：外層不是捲動容器之後會被內容撐高，筆記區就超出畫面、自己的捲軸也失效 */
+      div:has(> #page21.active) { overflow: clip; min-height: 0; }
       /* Tailwind 會清掉標題與清單的預設樣式，Markdown 內容需要補回 */
       .note-md h1, .note-md h2, .note-md h3 { font-weight: 700; margin: .75rem 0 .25rem; }
       .note-md h1 { font-size: 1.2rem; } .note-md h2 { font-size: 1.1rem; } .note-md h3 { font-size: 1rem; }
