@@ -83,8 +83,7 @@
       .auth-only { display: none !important; }
 
       /* ===== 筆記 (Page 21) ===== */
-      @keyframes noteFade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-      .note-fade { animation: noteFade .2s ease-out; }
+      .note-fade { animation: fadeIn .2s ease-out; }
       /* Tailwind 會清掉標題與清單的預設樣式，Markdown 內容需要補回 */
       .note-md h1, .note-md h2, .note-md h3 { font-weight: 700; margin: .75rem 0 .25rem; }
       .note-md h1 { font-size: 1.2rem; } .note-md h2 { font-size: 1.1rem; } .note-md h3 { font-size: 1rem; }
@@ -93,11 +92,12 @@
       .note-md ol { list-style: decimal; padding-left: 1.5rem; }
       .note-md a { color: #0078d4; }
       .note-md a:hover { text-decoration: underline; }
-      /* 字級跟著周圍文字走（1em）；縮小的話套了「小」字級的程式碼會小到看不清楚 */
+      /* 字級跟著周圍文字走；縮小的話套了「小」字級會看不清楚 */
       .note-md code { background: #fff; border: 1px solid #e1dfdd; padding: .05rem .35rem; border-radius: .25rem; font-size: 1em; }
       .note-md pre { background: #fff; border: 1px solid #e1dfdd; padding: .75rem; border-radius: .375rem; overflow-x: auto; }
-      .note-md pre code { background: none; border: 0; padding: 0; }
-      /* 附件連結一律顯示成檔案區塊，編輯時與張貼後同一個樣子；圖示依副檔名決定，沒列到的用一般檔案圖示 */
+      /* 只針對 pre 底下那一層：舊 Markdown 貼文是 pre 包 code，不能再畫一次框；區塊裡真正的行內程式碼在更內層 */
+      .note-md pre > code { background: none; border: 0; padding: 0; }
+      /* 附件連結顯示成檔案區塊，編輯時與張貼後同一個樣子；圖示依副檔名決定 */
       /* 圖示的字型名稱與編碼跟著 ec-fonts 站台的 Font Awesome 版本走，換大版本時這裡要一起改 */
       .note-md a[href^="files/"] { display: inline-block; max-width: 20rem; margin: .25rem .5rem .25rem 0; padding: .5rem .75rem; overflow: hidden; vertical-align: middle; color: #1f2937; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: .375rem; cursor: pointer; }
       .note-md a[href^="files/"]:hover { text-decoration: none; background: #f3f4f6; }
@@ -109,11 +109,29 @@
       .note-md a[href^="files/"][href$=".txt" i]::before { content: "\e8c6"; }
       .note-md a[href^="files/"]:is([href$=".html" i], [href$=".htm" i])::before { content: "\e83d"; }
       .note-md a[href^="files/"]:is([href$=".zip" i], [href$=".rar" i], [href$=".7z" i])::before { content: "\e5ee"; }
-      /* roosterjs 表格的「＋」把手是照瀏覽器預設的尺寸算法畫的，Tailwind 把全站改成另一種算法後會歪掉，這裡改回來 */
+      /* roosterjs 表格的「＋」把手照瀏覽器預設的尺寸算法畫，Tailwind 改了全站的算法後會歪掉 */
       #horizontalInserter, #verticalInserter { box-sizing: content-box; }
-      /* 顯示時程式碼區塊外層已有框與行號，內層不再重複 */
-      .note-md .note-code pre { flex: 1; margin: 0; padding: .5rem .75rem .5rem 0; border: 0; border-radius: 0; overflow: visible; font: inherit; }
-      .note-md blockquote { border-left: 3px solid #0078d4; padding-left: .75rem; color: #605e5c; }
+      /* 貼進來的內容每一行自帶邊距、字型、換行方式；程式碼區塊裡不採用，否則行距不一、長行會折行 */
+      /* 顏色、底色、粗體、字級要留著 */
+      .note-md pre * { margin: 0 !important; font-family: inherit !important; white-space: inherit !important; text-indent: 0 !important; }
+      /* 引用裡每一行自帶的上下邊距也不採用，否則換一行就像空了一行 */
+      .note-md blockquote > * { margin-top: 0 !important; margin-bottom: 0 !important; }
+      /* 顯示時外層已有框，內層不再重複 */
+      .note-md .note-code pre { margin: 0; padding: .5rem .75rem .5rem 0; border: 0; border-radius: 0; overflow: visible; font: inherit; counter-reset: note-line; }
+      /* 行號畫在每一行前面並垂直置中：每行高度不同也對得上 */
+      .note-md .note-code pre > * { position: relative; padding-left: 3rem; counter-increment: note-line; }
+      .note-md .note-code pre > *::before { content: counter(note-line); position: absolute; top: 0; bottom: 0; left: 0; display: flex; align-items: center; justify-content: flex-end; width: 2.25rem; font-size: .75rem; font-weight: 400; font-style: normal; color: #9ca3af; user-select: none; }
+      /* 引用：灰底灰框的圓角區塊 */
+      .note-md blockquote { position: relative; margin: .5rem 0; padding: .75rem 1rem; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: .75rem; }
+      /* 提醒區塊：編輯器不保留 class，類型靠行內樣式的底色來認，這裡依底色補上圖示 */
+      /* 底色與圖示要和 note.js 的 ALERTS 一致；字型名稱與編碼同上 */
+      .note-md blockquote:is([style*="239, 246, 255"], [style*="236, 253, 245"], [style*="250, 245, 255"], [style*="255, 251, 235"], [style*="254, 242, 242"]) { padding: .75rem 1rem .75rem 2.75rem !important; }
+      .note-md blockquote:is([style*="239, 246, 255"], [style*="236, 253, 245"], [style*="250, 245, 255"], [style*="255, 251, 235"], [style*="254, 242, 242"])::before { position: absolute; top: .75rem; left: 1rem; display: flex; align-items: center; height: 1.42rem; font: 900 1rem/1 "Font Awesome 7 Pro"; }
+      .note-md blockquote[style*="239, 246, 255"]::before { content: "\f05a"; color: #3b82f6; }
+      .note-md blockquote[style*="236, 253, 245"]::before { content: "\f0eb"; color: #10b981; }
+      .note-md blockquote[style*="250, 245, 255"]::before { content: "\f06a"; color: #a855f7; }
+      .note-md blockquote[style*="255, 251, 235"]::before { content: "\f071"; color: #f59e0b; }
+      .note-md blockquote[style*="254, 242, 242"]::before { content: "\f057"; color: #ef4444; }
       .note-md table { border-collapse: collapse; margin: .5rem 0; }
       .note-md th, .note-md td { border: 1px solid #e1dfdd; padding: .25rem .6rem; }
       .note-md th { background: #faf9f8; }

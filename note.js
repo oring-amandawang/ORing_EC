@@ -15,19 +15,32 @@ const NoteModule = (() => {
   const EMOJIS = ["📝", "📌", "📁", "💼", "⚙️", "🧩", "📦", "🔧", "💡", "📊", "📅", "✅", "❗", "🐞", "🧪", "📚", "🏭", "🖥️", "🔌", "🧾", "👥", "⭐", "🚀", "👻"];
   const ANN_ON = "px-4 py-5 text-white rounded-t-lg";
   const ANN_OFF = "px-4 py-3 text-gray-800";
-  // 公告橫幅的底色只收六碼色碼，其餘一律用預設的藍色漸層
+  // 顏色來自貼文檔，只收六碼色碼
   const annColor = (c) => (/^#[0-9a-f]{6}$/i.test(c || "") ? c : "");
-  // 自選顏色由原色漸層到摻白的淡色，和預設的藍色漸層同一種感覺
-  // 預設色是小幫手的主色，和其他顏色用同一條公式，九個色塊的色調才會一致
+  // 預設色與自選色用同一條漸層公式，色調才一致
   const ANN_DEFAULT = "#0078d4";
   const annBg = (c) => `linear-gradient(to right, ${c || ANN_DEFAULT}, color-mix(in srgb, ${c || ANN_DEFAULT} 60%, white))`;
   // CDN 一律鎖版本
   const ROOSTER_URL = "https://cdn.jsdelivr.net/npm/roosterjs@9.62.0/dist/rooster-min.js";
-  // 取自 Teams 的調色盤；色塊外框一律用同一個灰色
+  // 取自 Teams 的調色盤
   const TEXT_COLORS = ["#B6424C", "#CD5937", "#FDC030", "#BDCB4C", "#2B9B62", "#37797B", "#1E53A3", "#A5397A"];
   const MARK_COLORS = ["#DF9299", "#F4A593", "#FDD472", "#E5F18F", "#82CDA8", "#9DD9DB", "#C7D4E8", "#EBD3E1"];
-  // 引用區塊：左側粗線加淡框
-  const QUOTE_FORMAT = { borderLeft: "3px solid #c8c6c4", borderTop: "1px solid #e1dfdd", borderRight: "1px solid #e1dfdd", borderBottom: "1px solid #e1dfdd", paddingLeft: "12px", paddingRight: "12px", paddingTop: "6px", paddingBottom: "6px", marginLeft: "0", marginRight: "0", marginTop: "6px", marginBottom: "6px" };
+  // 傳給 roosterjs 蓋掉它預設的引用樣式；值要和 index.html 的 .note-md blockquote 一致
+  const QUOTE_FORMAT = { backgroundColor: "#f9fafb", borderLeft: "1px solid #e5e7eb", borderTop: "1px solid #e5e7eb", borderRight: "1px solid #e5e7eb", borderBottom: "1px solid #e5e7eb", paddingLeft: "16px", paddingRight: "16px", paddingTop: "12px", paddingBottom: "12px", marginLeft: "0", marginRight: "0", marginTop: "8px", marginBottom: "8px" };
+  // 提醒區塊是帶行內底色的引用；編輯器不保留 class，類型靠底色來認
+  // 圖示由 index.html 的樣式依底色補上，底色改了那邊要一起改
+  // 類型 → [標題, 圖示, 圖示色, 底色, 框線色, 標題文字色]
+  const ALERTS = {
+    NOTE: ["備註", "circle-info", "#3b82f6", "#eff6ff", "#bfdbfe", "#1d4ed8"],
+    TIP: ["提示", "lightbulb", "#10b981", "#ecfdf5", "#a7f3d0", "#047857"],
+    IMPORTANT: ["重要", "circle-exclamation", "#a855f7", "#faf5ff", "#e9d5ff", "#7e22ce"],
+    WARNING: ["注意", "triangle-exclamation", "#f59e0b", "#fffbeb", "#fde68a", "#b45309"],
+    CAUTION: ["警告", "circle-xmark", "#ef4444", "#fef2f2", "#fecaca", "#b91c1c"],
+  };
+  // 手打的標記，例如 [!NOTE]
+  const ALERT_MARK = /^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \u00a0]*/i;
+  const alertStyle = (type) => `background-color:${ALERTS[type][3]};border:1px solid ${ALERTS[type][4]}`;
+  const alertTitle = (type) => `<div><b style="color:${ALERTS[type][5]}">${ALERTS[type][0]}</b></div>`;
   // [圖示, 指令, 提示文字]；null 為分隔線，字串為下拉選單
   const TOOLS = [
     ["bold", "bold", "粗體"], ["italic", "italic", "斜體"], ["underline", "underline", "底線"], ["strikethrough", "strike", "刪除線"], null,
@@ -49,15 +62,15 @@ const NoteModule = (() => {
   const urlCache = new Map();
   const $ = (id) => document.getElementById(id);
   const esc = Utils.escapeHtml;
-  // 資料夾裡的檔案可能被其他有寫入權限的人放進惡意內容：編號會被放進按鈕的點擊指令，只收英數、底線、連字號
+  // 資料夾裡的檔案不可信：編號會被放進按鈕的點擊指令，只收英數、底線、連字號
   const SAFE_ID = /^[\w-]+$/;
-  // 內文除了擋程式，也不收表單元件與 class／id，避免假登入框或撞到頁面上既有的元素
+  // 不收表單元件與 class／id，避免假登入框或撞到頁面既有的元素
   const CLEAN = { FORBID_TAGS: ["form", "input", "button", "textarea", "select", "option", "style"], FORBID_ATTR: ["class", "id", "name"] };
   const clean = (html) => DOMPurify.sanitize(html, CLEAN);
   const md = (src) => clean(marked.parse(src || "", { breaks: true }));
   // 貼文有 format: "html" 的是新格式，沒有的是舊的 Markdown
   const bodyHtml = (p) => (p.format === "html" ? clean(p.body) : md(p.body));
-  // 顯示用：圖片的 files/ 路徑先收進 data-file，等 hydrate 換成實際網址；直接留在 src 瀏覽器會先去網站上找而失敗
+  // 圖片路徑先收進 data-file：留在 src 瀏覽器會先向網站請求而失敗
   const lazy = (html) => html.replace(/(<img\b[^>]*?\s)src="files\//g, '$1data-file="files/');
   const plainText = (p) => (p.format === "html" ? new DOMParser().parseFromString(p.body, "text/html").body.textContent : p.body);
 
@@ -72,11 +85,10 @@ const NoteModule = (() => {
     return `${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}`;
   }
 
-  /* 貼文時間：一律帶日期，跨年才帶年份 */
+  /* 貼文時間：沿用小幫手的日期與時間寫法，一律帶年份 */
   function fmt(t) {
     const d = new Date(t);
-    const time = d.toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", hour12: true });
-    return `${d.getFullYear() === new Date().getFullYear() ? "" : d.getFullYear() + "/"}${d.getMonth() + 1}/${d.getDate()} ${time}`;
+    return DateUtils.format(d) + " " + formatTime(d);
   }
 
   /* 姓名旁細線的顏色：人員設定裡有指定就用指定的，沒有就依工號固定配一色 */
@@ -159,7 +171,7 @@ const NoteModule = (() => {
     return urlCache.get(k);
   }
 
-  /* 連續兩張以上的圖片（中間沒有文字）排成每列三張的方形縮圖；只在顯示時排，不存進貼文 */
+  /* 連續的圖片排成每列三張的方形縮圖；只在顯示時排，不存進貼文 */
   function groupImages(root) {
     const imageOnly = (x) => x.nodeType === 1 && !x.textContent.trim() && !!x.querySelector("img") && !x.querySelector("table, pre, a");
     // 空行不算中斷
@@ -186,6 +198,32 @@ const NoteModule = (() => {
       else if (!(run.length && blank(x))) flush();
     }
     flush();
+  }
+
+  /* 舊寫法的引用換成現在的樣子；顯示前與進編輯器前都要做 */
+  function upgradeQuotes(root) {
+    const alertBgs = new Set(Object.values(ALERTS).map((a) => a[3]).map((hex) => { const n = parseInt(hex.slice(1), 16); return `rgb(${n >> 16}, ${(n >> 8) & 255}, ${n & 255})`; }));
+    root.querySelectorAll("blockquote").forEach((q) => {
+      const m = ALERT_MARK.exec(q.textContent);
+      if (!m) {
+        // 舊貼文存著左邊粗線的行內樣式，拿掉後外觀全交給 index.html
+        if (!alertBgs.has(q.style.backgroundColor)) q.removeAttribute("style");
+        return;
+      }
+      // 舊貼文與 Markdown 回覆是用 [!NOTE] 標記寫的
+      const type = m[1].toUpperCase();
+      // 標記在第一個有字的文字節點裡（Markdown 轉出來的引用開頭會先有一個換行）
+      const walker = document.createTreeWalker(q, NodeFilter.SHOW_TEXT);
+      let first = walker.nextNode();
+      while (first && !first.data.trim()) first = walker.nextNode();
+      first.data = first.data.replace(ALERT_MARK, "");
+      // 標記獨占一行時，拿掉它之後那一行就空了；Markdown 寫法則是標記後面跟著一個換行
+      const line = first.parentElement;
+      if (line !== q && !line.textContent.trim() && !line.querySelector("img")) line.remove();
+      else if (!first.data && first.nextSibling && first.nextSibling.tagName === "BR") first.nextSibling.remove();
+      q.style.cssText = alertStyle(type);
+      q.insertAdjacentHTML("afterbegin", alertTitle(type));
+    });
   }
 
   /* 把內文裡的 files/ 連結換成實際檔案，外部連結開新分頁 */
@@ -215,7 +253,9 @@ const NoteModule = (() => {
       });
     });
     el.querySelectorAll('.note-md a[href^="http"]').forEach((a) => { a.target = "_blank"; a.rel = "noopener"; });
-    // 程式碼區塊包上標頭、行號與複製鈕；只在顯示時加，不存進貼文
+    el.querySelectorAll(".note-md:not([contenteditable])").forEach(upgradeQuotes);
+    // 程式碼區塊包上標頭與複製鈕；只在顯示時加，不存進貼文
+    // 行號由 index.html 的計數器畫在每一行前面，前提是一行一個區塊
     el.querySelectorAll(".note-md pre").forEach((pre) => {
       if (pre.parentElement.classList.contains("note-code")) return;
       const text = pre.innerText.replace(/\n$/, "");
@@ -226,9 +266,14 @@ const NoteModule = (() => {
           <i class="fa-solid fa-code"></i><span class="flex-1"></span>
           <button type="button" aria-label="複製" class="text-sm text-gray-500 transition-colors hover:text-ms-blue"><i class="fa-solid fa-clone"></i></button>
         </div>
-        <div class="note-code flex overflow-auto max-h-96 font-mono text-xs leading-5">
-          <div class="shrink-0 py-2 pl-3 pr-2 text-right text-gray-400 whitespace-pre select-none">${text.split("\n").map((_, i) => i + 1).join("\n")}</div>
-        </div>`;
+        <div class="note-code overflow-auto max-h-96 font-mono text-xs leading-relaxed"></div>`;
+      // 擠在同一個區塊裡的多行要拆開（舊 Markdown 的 code、由選取文字轉成的區塊）
+      const packed = (x) => !x.children.length || (x.children.length === 1 && x.firstElementChild.tagName === "CODE");
+      for (const x of packed(pre) ? [pre] : [...pre.children].filter((c) => !c.children.length && c.textContent.includes("\n"))) {
+        const lines = x.textContent.replace(/\n$/, "").split("\n").map((l) => `<div>${esc(l) || "<br>"}</div>`).join("");
+        if (x === pre) pre.innerHTML = lines;
+        else x.outerHTML = lines;
+      }
       pre.replaceWith(box);
       box.lastElementChild.appendChild(pre);
       const btn = box.querySelector("button");
@@ -289,6 +334,12 @@ const NoteModule = (() => {
     b.ready = (await b.handle.requestPermission({ mode: "readwrite" })) === "granted";
     if (b.ready) { S.book = key; S.channel = null; }
     await reload();
+  }
+
+  /* 上方功能列的重新整理：重讀完要有提示，否則內容沒變時看不出有反應 */
+  async function refresh() {
+    await reload();
+    ToastModule.show("筆記已重新整理", "success");
   }
 
   /* 從資料夾重新讀取 */
@@ -370,7 +421,7 @@ const NoteModule = (() => {
         <div class="mt-3 font-bold text-xl text-gray-800">筆記</div>
         <div class="mt-2 text-sm leading-relaxed text-gray-500">筆記存放在你選的資料夾裡<br>共用的選公槽上的資料夾，私人的選自己電腦上的資料夾</div>
         ${isLoggedIn ? `
-        <button onclick="NoteModule.addBook()" class="w-full mt-5 px-4 py-2 font-bold text-white bg-ms-blue rounded-md transition-colors hover:bg-ms-dark">選擇資料夾</button>
+        <button onclick="NoteModule.addBook()" class="w-full mt-5 btn-primary">選擇資料夾</button>
         <div class="mt-4 text-xs leading-relaxed text-gray-400">之後瀏覽器詢問權限時選「每次造訪時都允許」<br>就不用再重選</div>` : `
         <div class="mt-5 px-4 py-2 text-sm text-gray-500 bg-gray-100 rounded-md">請先登入才能加入筆記本</div>`}
       </div>
@@ -402,9 +453,7 @@ const NoteModule = (() => {
           <div class="relative">
             <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400"></i>
             <input id="noteSearch" oninput="NoteModule.search(this.value)" placeholder="搜尋所有筆記本" aria-label="搜尋所有筆記本" class="w-64 py-1.5 pl-9 pr-3 text-sm bg-gray-100 border border-transparent rounded-md outline-none transition-colors focus:bg-white focus:border-ms-blue">
-          </div>
-          <button onclick="NoteModule.reload()" title="重新讀取筆記" aria-label="重新讀取筆記" class="${ICON_BTN}"><i class="fa-solid fa-arrows-rotate"></i></button>
-        </header>
+          </div>        </header>
         <div class="flex-1 overflow-y-auto">
           <div class="max-w-3xl mx-auto px-5 py-5 space-y-4">
             <div id="noteComposer">
@@ -454,7 +503,7 @@ const NoteModule = (() => {
         <span id="${k}_busy" role="status" class="hidden items-center gap-1.5 text-xs text-gray-500"></span>
         <span class="flex-1"></span>
         <button onclick="${onCancel}" class="px-3 py-1.5 text-sm text-gray-600 rounded-md transition-colors hover:bg-gray-200">取消</button>
-        <button id="${k}_save" onclick="${onSave}" class="px-5 py-1.5 font-bold text-sm text-white bg-ms-blue rounded-md transition-colors hover:bg-ms-dark disabled:opacity-60 disabled:cursor-wait">${p.id ? "儲存" : "張貼"}</button>
+        <button id="${k}_save" onclick="${onSave}" class="text-sm btn-primary disabled:opacity-60 disabled:cursor-wait">${p.id ? "儲存" : "張貼"}</button>
       </div>
     </div>`;
   }
@@ -488,12 +537,15 @@ const NoteModule = (() => {
       "left-0 p-2 w-max");
     const ROW = "flex items-center gap-2 w-full px-3 py-1.5 text-sm text-left text-gray-700 rounded whitespace-nowrap transition-colors hover:bg-gray-100";
     const ico = (name) => `<i class="fa-solid fa-${name} w-4 text-center text-gray-500"></i>`;
-    const size = menu("text-size", "文字大小", [["9pt", "小"], ["10.5pt", "標準"], ["14pt", "大"], ["18pt", "特大"]].map(([v, t]) => pick("size", v, t, ROW)).join(""), "left-0 p-1");
+    const size = menu("text-size", "文字大小", [["14pt", "大"], ["10.5pt", "中"], ["9pt", "小"]].map(([v, t]) => pick("size", v, t, ROW)).join(""), "left-0 p-1");
     const more = menu("ellipsis", "其他功能", `
       <div class="flex items-center gap-2 px-3 pt-1.5 pb-1 text-sm text-gray-700 whitespace-nowrap">${ico("font")}文字樣式</div>
       <div class="flex gap-1 px-3 pb-1.5">${[["0", "段落"], ["1", "標題 1"], ["2", "標題 2"], ["3", "標題 3"]].map(([v, t]) => pick("heading", v, t, "px-2 py-1 text-xs text-gray-700 bg-gray-100 rounded whitespace-nowrap transition-colors hover:bg-gray-200")).join("")}</div>
       <div class="my-1 border-t border-gray-100"></div>
-      ${[["code", "code", "行內程式碼"], ["minus", "hr", "插入水平線"], ["eraser", "clear", "清除格式"], ["rotate-left", "undo", "復原"], ["rotate-right", "redo", "重做"]].map(([i, c, t]) => pick(c, "", ico(i) + t, ROW)).join("")}`, "right-0 p-1");
+      ${[["code", "code", "行內程式碼"], ["minus", "hr", "插入水平線"], ["eraser", "clear", "清除格式"], ["rotate-left", "undo", "復原"], ["rotate-right", "redo", "重做"]].map(([i, c, t]) => pick(c, "", ico(i) + t, ROW)).join("")}
+      <div class="my-1 border-t border-gray-100"></div>
+      <div class="flex items-center gap-2 px-3 pt-1.5 pb-1 text-sm text-gray-700 whitespace-nowrap">${ico("map-pin")}提醒</div>
+      <div class="flex gap-1 px-3 pb-1.5">${Object.entries(ALERTS).map(([type, [label, i, color]]) => pick("alert", type, `<i class="fa-solid fa-${i}" style="color:${color}"></i>${label}`, "flex items-center gap-1 px-2 py-1 text-xs text-gray-700 bg-gray-100 rounded whitespace-nowrap transition-colors hover:bg-gray-200")).join("")}</div>`, "right-0 p-1");
     return TOOLS.map((t) =>
       t === null ? `<span class="w-px h-5 mx-1 bg-gray-200"></span>`
       : t === "mark" ? palette("highlighter", "mark", "螢光標示", MARK_COLORS)
@@ -508,7 +560,7 @@ const NoteModule = (() => {
     // roosterjs 內建的 MarkdownPlugin 用的是單一符號（*粗體*、_斜體_），而且中文輸入法下不會觸發，所以自己做
     // 斜體要排在粗體後面，並排除前面還有一個 * 的情況，否則 **粗體* 打到一半就會被當成斜體
     // 符號前面是英數時不轉換，否則 5*3 and 4*2 這種算式會被當成斜體；中文沒有空白，所以不能要求前面是空白
-    // [語法, 套用方式, 後面是否補一個空白]
+    // [語法, 套用方式, 後面是否補一個空白, 程式碼區塊裡是否也適用]
     const RULES = [
       [/(?<![A-Za-z0-9*])\*\*([^*\s][^*]*)\*\*$/, (t) => (t.format.fontWeight = "bold")],
       [/(?<![A-Za-z0-9~])~~([^~\s][^~]*)~~$/, (t) => (t.format.strikethrough = true)],
@@ -516,7 +568,7 @@ const NoteModule = (() => {
       [/(?<![A-Za-z0-9_])__([^_\s][^_]*)__$/, (t) => (t.format.underline = true)],
       [/(?<![A-Za-z0-9*])\*([^*\s][^*]*)\*$/, (t) => (t.format.italic = true)],
       // 程式碼與連結是包在文字外面的一層，游標會留在裡面；補一個一般空白讓接下來打的字落在外面
-      [/`([^`]+)`$/, (t) => { t.code = { format: {} }; delete t.format.backgroundColor; }, true],
+      [/`([^`]+)`$/, (t) => { t.code = { format: {} }; delete t.format.backgroundColor; }, true, true],
       [/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/, (t, m) => (t.link = { format: { href: m[2], underline: true }, dataset: {} }), true],
     ];
     let editor = null;
@@ -540,10 +592,21 @@ const NoteModule = (() => {
           const marker = () => paragraph.segments.find((x) => x.segmentType === "SelectionMarker");
           // 清空的那一行要留一個換行，否則瀏覽器沒有地方放游標，會把游標丟到下一行
           const emptyLine = () => { paragraph.segments = [marker(), roosterjs.createBr()]; };
+          // 把這一行包進新的區塊；區塊在最後時補一個空行，游標才出得去
+          const wrap = (tag, format, at) => {
+            const box = roosterjs.createFormatContainer(tag, format);
+            box.blocks.push(paragraph);
+            model.blocks.splice(at, 1, box);
+            if (at === model.blocks.length - 1) {
+              const tail = roosterjs.createParagraph();
+              tail.segments.push(roosterjs.createBr());
+              model.blocks.push(tail);
+            }
+            return box;
+          };
           const pre = model.blocks.find((x) => x.blockGroupType === "FormatContainer" && x.tagName === "pre" && x.blocks.includes(paragraph));
-          if (pre) {
-            // 程式碼區塊裡不做任何格式轉換；只認結尾的三個反引號：刪掉它並把游標移到區塊下方
-            if (!seg.text.endsWith("```")) return false;
+          // 程式碼區塊裡打三個反引號是結尾：刪掉它並把游標移到區塊下方
+          if (pre && seg.text.endsWith("```")) {
             seg.text = seg.text.slice(0, -3);
             const caret = marker(), at = model.blocks.indexOf(pre);
             paragraph.segments.splice(paragraph.segments.indexOf(caret), 1);
@@ -558,9 +621,28 @@ const NoteModule = (() => {
             below.segments.unshift(caret);
             return true;
           }
+          // 引用的第一行打完 [!NOTE]，或一般段落直接打 >[!NOTE]：變成提醒區塊，游標移到新的第二行
+          let quote = model.blocks.find((x) => x.blockGroupType === "FormatContainer" && x.tagName === "blockquote" && x.blocks[0] === paragraph);
+          const top = model.blocks.indexOf(paragraph);
+          // 不在引用裡時，開頭要有大於符號才算
+          const mark = quote ? seg.text : top >= 0 && paragraph.segments[0].text === seg.text && /^>/.test(seg.text) ? seg.text.replace(/^>[ \u00a0]?/, "") : "";
+          const alert = ALERT_MARK.exec(mark);
+          if (alert && alert[0].trim() === mark.trim()) {
+            if (!quote) quote = wrap("blockquote", {}, top);
+            const [label, , , bg, line, ink] = ALERTS[alert[1].toUpperCase()], edge = `1px solid ${line}`;
+            // 要先告訴編輯器這個引用被改了，否則它會沿用畫好的舊外框，底色不會變
+            roosterjs.mutateBlock(quote).format = { backgroundColor: bg, borderTop: edge, borderRight: edge, borderBottom: edge, borderLeft: edge };
+            seg.text = label;
+            seg.format = { ...seg.format, fontWeight: "bold", textColor: ink };
+            const caret = marker(), body = roosterjs.createParagraph();
+            paragraph.segments.splice(paragraph.segments.indexOf(caret), 1);
+            body.segments.push(caret, roosterjs.createBr());
+            quote.blocks.splice(1, 0, body);
+            return true;
+          }
           // 游標前只有這一段文字才算行首（不能用物件比對，傳進來的 seg 可能是複本）
           const first = paragraph.segments[0], next = paragraph.segments[1];
-          if (first.segmentType === "Text" && first.text === seg.text && next && next.segmentType === "SelectionMarker") {
+          if (!pre && first.segmentType === "Text" && first.text === seg.text && next && next.segmentType === "SelectionMarker") {
             // 行首打「> 」是引用、「# 」到「### 」是標題
             const lead = /^(>|#{1,3})[ \u00a0]$/.exec(seg.text);
             if (lead) {
@@ -568,25 +650,19 @@ const NoteModule = (() => {
               after = lead[1] === ">" ? () => roosterjs.toggleBlockQuote(editor, QUOTE_FORMAT) : () => roosterjs.setHeadingLevel(editor, lead[1].length);
               return true;
             }
-            // 行首打三個反引號：把這一行變成程式碼區塊，後面補空行讓游標出得去
+            // 行首打三個反引號：把這一行變成程式碼區塊
             const at = model.blocks.indexOf(paragraph);
             if (seg.text === "```" && at >= 0) {
               emptyLine();
               // 區塊和裡面那一行都要標成保留空白，否則連續空白會被合併
-              const box = roosterjs.createFormatContainer("pre", { whiteSpace: "pre" });
               paragraph.format.whiteSpace = "pre";
-              box.blocks.push(paragraph);
-              model.blocks.splice(at, 1, box);
-              if (at === model.blocks.length - 1) {
-                const tail = roosterjs.createParagraph();
-                tail.segments.push(roosterjs.createBr());
-                model.blocks.push(tail);
-              }
+              wrap("pre", { whiteSpace: "pre" }, at);
               return true;
             }
           }
-          for (const [re, apply, pad] of RULES) {
-            const m = re.exec(seg.text);
+          for (const [re, apply, pad, inBlock] of RULES) {
+            // 程式碼區塊裡只轉行內程式碼；**、*、__ 在程式碼裡是內容，不能自動轉掉
+            const m = (!pre || inBlock) && re.exec(seg.text);
             if (!m) continue;
             const part = roosterjs.splitTextSegment(seg, paragraph, m.index, seg.text.length);
             part.text = m[1];
@@ -627,7 +703,7 @@ const NoteModule = (() => {
     // 不用 createEditor：它會替每段文字加上 Calibri 字型的行內樣式
     S.eds[k] = new R.Editor($(k + "_body"), {
       plugins: [new R.PastePlugin(), new R.EditPlugin(), new R.TableEditPlugin(),
-        // 要排在 AutoFormatPlugin 前面，否則行首的「> 」會先被它變成箭頭項目符號
+        // 要排在 AutoFormatPlugin 前面，理由見 willHandleEventExclusively
         markdownPlugin(), new R.AutoFormatPlugin({ autoBullet: true, autoNumbering: true, autoLink: true, autoHorizontalLine: true }), new R.ShortcutPlugin(), new R.HyperlinkPlugin(), new R.WatermarkPlugin("輸入內容")],
       initialModel: html ? R.createModelFromHtml(html) : undefined,
     });
@@ -646,7 +722,7 @@ const NoteModule = (() => {
     });
   }
 
-  /* 選取範圍是否碰到行內程式碼；游標緊跟在程式碼後面（中間只隔空白）也算，否則接著打的字會帶著螢光貼在程式碼旁邊 */
+  /* 選取範圍是否碰到行內程式碼；緊跟在後面也算，否則接著打的字會帶著螢光貼在旁邊 */
   function touchesCode(ed) {
     const sel = ed.getDOMSelection();
     if (!sel || sel.type !== "range") return false;
@@ -678,7 +754,7 @@ const NoteModule = (() => {
       }
       return null;
     };
-    // 插入一段 HTML 後把游標搬進剛插入的內容裡；插入完游標一定緊跟在新內容後面，從那裡往回找就不會認錯
+    // 插入 HTML 後把游標搬進新內容；插入完游標一定緊跟在後面，從那裡往回找才不會認錯
     const insertAndEnter = (html, intoBlock) => ed.formatContentModel((model, context) => {
       R.mergeModel(model, R.createModelFromHtml(html), context);
       const hit = locate(model);
@@ -713,11 +789,10 @@ const NoteModule = (() => {
           R.toggleCode(ed);
           return R.setBackgroundColor(ed, null);
         }
-        // 沒選取文字時 roosterjs 不會有任何反應：放一個空的程式碼框並把游標停在裡面
-        // 完全空的元素放不了游標，所以裡面放一個看不見的零寬空白，存檔時會清掉
+        // 沒選取文字時放一個空的程式碼框；空元素放不了游標，所以塞一個零寬空白，存檔時清掉
         insertAndEnter("<code>\u200b</code>&nbsp;");
       },
-      // 有選取文字就把那些字搬進區塊，沒有就放空的區塊並把游標停在裡面；後面補一個空行，游標才出得了區塊
+      // 有選取文字就搬進區塊，沒有就放空區塊；後面補空行，游標才出得去
       codeblock: () => {
         const sel = ed.getDOMSelection();
         // 用瀏覽器的選取取文字，跨行時才會保留換行
@@ -727,6 +802,8 @@ const NoteModule = (() => {
         insertAndEnter(`<pre>${text ? esc(text) : "<br>"}</pre><div><br></div>`, true);
       },
       hr: () => insertHtml(ed, "<hr><div><br></div>"),
+      // 插入提醒區塊：第一行是標題，游標停在第二行
+      alert: () => insertAndEnter(`<blockquote style="${alertStyle(arg)}">${alertTitle(arg)}<div><br></div></blockquote><div><br></div>`, true),
       table: () => R.insertTable(ed, 3, 3),
       clear: () => R.clearFormat(ed), undo: () => R.undo(ed), redo: () => R.redo(ed),
       link: () => {
@@ -741,6 +818,7 @@ const NoteModule = (() => {
   async function toEditorHtml(p) {
     const t = document.createElement("template");
     t.innerHTML = bodyHtml(p);
+    upgradeQuotes(t.content);
     const b = bookOf(p._book);
     for (const img of t.content.querySelectorAll('img[src^="files/"]')) {
       try { img.setAttribute("src", await fileUrl(b, decodeURIComponent(img.getAttribute("src").slice(6)))); } catch {}
@@ -776,8 +854,13 @@ const NoteModule = (() => {
       const name = decodeURIComponent(a.getAttribute("href").slice(6));
       await adopt(name, S.attached.get(name));
     }
-    // 零寬空白是為了讓游標能停在空的程式碼框裡才放的
+    // 清掉讓游標停在空程式碼框裡用的零寬空白
     return clean(t.innerHTML).replace(/\u200b/g, "");
+  }
+
+  /* 有沒有打到一半還沒送出的貼文；app.js 在離開頁面前用它決定要不要提醒 */
+  function hasDraft() {
+    return Object.keys(S.eds).some((k) => $(k + "_title").value.trim() || hasContent(roosterjs.exportContent(S.eds[k])));
   }
 
   /* 內容是否有東西（只有空行不算） */
@@ -972,14 +1055,14 @@ const NoteModule = (() => {
           ${o.danger ? `<button onclick="${o.danger[1]}" class="px-3 py-1.5 text-sm text-red-600 rounded-md transition-colors hover:bg-red-50">${o.danger[0]}</button>` : ""}
           <span class="flex-1"></span>
           <button onclick="NoteModule.closeDialog()" class="px-4 py-1.5 text-sm text-gray-600 rounded-md transition-colors hover:bg-gray-100">${o.editable ? "取消" : "關閉"}</button>
-          ${o.editable ? `<button onclick="${o.onSave}" class="px-5 py-1.5 font-bold text-sm text-white bg-ms-blue rounded-md transition-colors hover:bg-ms-dark">${o.saveText}</button>` : ""}
+          ${o.editable ? `<button onclick="${o.onSave}" class="text-sm btn-primary">${o.saveText}</button>` : ""}
         </div>
       </div>
     </div>`;
     if (o.editable) $("noteDlgName").focus();
   }
 
-  /* 圖片放大檢視：點圖片在「符合視窗」與放大之間切換，滾輪縮放，放大後可按住拖曳；點圖片以外的地方或按 Esc 關閉 */
+  /* 圖片放大檢視：點圖片切換大小、滾輪縮放、放大後可拖曳；點圖片以外或按 Esc 關閉 */
   // 圖片用 m-auto 置中而不是 items-center：後者在圖片比視窗大時，上緣和左緣會捲不到
   function zoom(src) {
     $("noteDialog").innerHTML = `
@@ -1002,7 +1085,7 @@ const NoteModule = (() => {
     img.classList.toggle("cursor-grab", !!width);
   }
 
-  /* 放大後按住圖片拖曳來移動畫面；有拖動就記下來，放開時的那一下點擊才不會又把圖縮回去 */
+  /* 放大後按住拖曳移動畫面；有拖動就記下來，放開時的點擊才不會把圖縮回去 */
   function zoomDrag(e) {
     const img = e.currentTarget, box = img.closest("[role=dialog]");
     let moved = 0;
@@ -1134,7 +1217,7 @@ const NoteModule = (() => {
     $("noteComposeBar").classList.remove("hidden");
   }
 
-  /* 送出按鈕的忙碌提示：鎖住按鈕並換成進行中的文字，結束後還原；存圖片到網路磁碟可能要幾秒，沒有提示會被當成沒反應 */
+  /* 送出按鈕的忙碌提示；存圖片到網路磁碟要幾秒，沒有提示會被當成沒反應 */
   async function busy(btn, label, fn) {
     if (btn.disabled) return;
     const text = btn.textContent;
@@ -1270,7 +1353,7 @@ const NoteModule = (() => {
   /* 附件存檔用的檔名；檔名裡的空白與括號會讓連結斷掉 */
   const fileName = (f) => `${stamp()}-${Math.random().toString(36).slice(2, 6)}_${f.name.replace(/[\\/:*?"<>|\s()\[\]#%]/g, "_")}`;
 
-  /* 張貼與編輯表單的附件：先存檔，再把圖片或連結插進編輯器；一次很多檔時顯示進度 */
+  /* 張貼與編輯表單的附件：先存檔，再插進編輯器 */
   async function attachFiles(k, files) {
     const ed = S.eds[k], b = bookOf(k === "noteEdit" ? S.posts.get(S.editing)._book : S.book);
     if (!ed || !b || !files.length) return;
@@ -1346,9 +1429,9 @@ const NoteModule = (() => {
     };
   }
 
-  const api = { open, reload, addBook, addBookHandle, grant, saveBook, removeBook, select, more, saveChannel, deleteChannel, compose, post, edit, cancelEdit, saveEdit, remove, restore, purge, reply, removeReply, toggleReplies, addFiles, attachFiles };
+  const api = { open, reload, refresh,addBook, addBookHandle, grant, saveBook, removeBook, select, more, saveChannel, deleteChannel, compose, post, edit, cancelEdit, saveEdit, remove, restore, purge, reply, removeReply, toggleReplies, addFiles, attachFiles };
   return {
     ...Object.fromEntries(Object.entries(api).map(([k, fn]) => [k, safe(fn)])),
-    search, cancelCompose, annStyle, cmd, zoomTo, zoomDrag, drop, toggleMore, bookDialog, channelDialog, closeDialog, paste, attach,
+    search, hasDraft, cancelCompose, annStyle, cmd, zoomTo, zoomDrag, drop, toggleMore, bookDialog, channelDialog, closeDialog, paste, attach,
   };
 })();

@@ -2,20 +2,13 @@
       // 1. 外部依賴與系統設定 (Configuration)
       // ==========================================
 
-      /* Tailwind 設定 (保留在 head 內) */
-
       /* GIST API 設定 */
-      // ─── 部署切換 ───────────────────────────────────────────
-      // USE_WORKER=true (預設)：所有 Gist API 走 Cloudflare Worker，Token 藏在 Worker 環境變數
-      //                        HTML 本身完全不需要 Token
-      // USE_WORKER=false：緊急備援，直連 GitHub API，需要在下方 GITHUB_TOKEN 填 token
-      // ───────────────────────────────────────────────────────
+      // true：Gist 走 Cloudflare Worker，Token 只存在 Worker；false：緊急備援直連 GitHub，要在 GITHUB_TOKEN 填值
       const USE_WORKER = true;
       // 公司網路連 workers.dev 偶爾掉封包；備用代理 https://oring-ec.pages.dev 同程式同 KV，切換時一併改 index.html 的 preconnect
       const WORKER_URL = "https://oring-ec.oring-ec.workers.dev";
-      // fallback 用（USE_WORKER=false 時才需要值；平常留空即可）
+      // 平常必須留空：原始碼公開，填了會被 GitHub 自動撤銷
       const GITHUB_TOKEN = "";
-      // 統一的 API base（下方所有 fetch 都用這個）
       const GITHUB_API_BASE = USE_WORKER ? WORKER_URL : "https://api.github.com";
       const GIST_CONFIG = {
         ECN: {
@@ -482,7 +475,7 @@
               isRejected,
               isRejected1,
               month,
-              /* 以下由 overlay 填 */
+              // 以下由 overlay 填
               plmStart: "",
               plmRelease: "",
               complexity: "",
@@ -586,7 +579,6 @@
           return dedupedList.map((p) => {
             const stepData = p.ApprovalData || [];
 
-            // 各關卡
             const s2 = buildStepCell(stepData, ["AplDpt01", "Instctr01"]);
             const s3 = buildStepCell(stepData, "SpcMem01");
             const s7 = buildStepCell(stepData, "SpcMem04");
@@ -692,7 +684,7 @@
           }
         },
 
-        /* === ECN overlay === */
+        // ===== ECN overlay =====
         loadEcnFromArray(records) {
           this.ecn.clear();
           for (const r of records || []) {
@@ -738,7 +730,7 @@
           return byYear;
         },
 
-        /* === PCB overlay === */
+        // ===== PCB overlay =====
         loadPcbFromArray(records) {
           this.pcb.clear();
           for (const r of records || []) {
@@ -1172,8 +1164,7 @@
           const downloads = await Promise.all(
             truncatedList.map(async ({ name, raw_url }) => {
               try {
-                // raw_url 走 gist.githubusercontent.com（不經 Worker 代理）
-                // Secret Gist 的 raw_url 本身已包含 hash 授權，不需 Authorization header
+                // raw_url 不經 Worker；Secret Gist 的 raw_url 已含授權，不需 Authorization header
                 const res = await fetch(raw_url + "?t=" + new Date().getTime());
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const content = await res.text();
@@ -1331,7 +1322,6 @@
           return s;
         }
 
-        // 公開 API
         return {
           parse,
           format,
@@ -1420,12 +1410,10 @@
           toast.classList.add("toast-item");
           container.appendChild(toast);
 
-          // 進入動畫
           requestAnimationFrame(() => {
             toast.classList.remove("-translate-y-4", "opacity-0");
           });
 
-          // 進度條動畫
           const progressBar = toast.querySelector(".toast-progress");
           if (progressBar) {
             progressBar.style.transition = `width ${duration}ms linear`;
@@ -1434,7 +1422,6 @@
             });
           }
 
-          // 自動移除
           const remove = () => {
             toast.classList.add("-translate-y-4", "opacity-0");
             setTimeout(() => toast.remove(), 300);
@@ -1454,7 +1441,7 @@
       /* Lazy-init 日期選擇器 */
       const FlatpickrManager = (() => {
         const instances = new Map();
-        const lazyCallbacks = new Map();  // 儲存延遲初始化的 callback
+        const lazyCallbacks = new Map();
 
         /* 銷毀指定選擇器的所有實例 */
         function destroy(selector) {
@@ -1478,7 +1465,6 @@
           instances.forEach((list, selector) => {
             destroy(selector);
           });
-          // 清除延遲初始化標記
           document.querySelectorAll('.fp-lazy').forEach(el => {
             if (el._flatpickr) {
               try { el._flatpickr.destroy(); } catch(e) {}
@@ -1515,7 +1501,6 @@
           // 隱藏全為跨月日期的多餘列
           function trimExtraWeekRow(container) {
             if (!container) return;
-            // 分組成每 7 個一列
             const days = Array.from(container.querySelectorAll('.flatpickr-day'));
             for (let i = 0; i < days.length; i += 7) {
               const row = days.slice(i, i + 7);
@@ -1584,7 +1569,6 @@
         return { init, initSingle, destroy, destroyAll, getInstances, lazyCallbacks };
       })();
 
-      // 點擊時初始化 Flatpickr
       document.addEventListener('focusin', function(e) {
         const input = e.target;
         if (input.classList.contains('fp-lazy') && !input._flatpickr && isLoggedIn) {
@@ -2420,7 +2404,6 @@
         const name = SEARCH_HELP_PAGE_NAME[pageKey] || '';
         const examples = SEARCH_HELP_EXAMPLES[pageKey] || SEARCH_HELP_EXAMPLES.p1;
 
-        // 標題
         document.getElementById('searchHelpTitle').innerHTML =
           `<i class="fa-solid fa-magnifying-glass"></i> 搜尋語法說明`;
 
@@ -2437,7 +2420,6 @@
           `<span style="display:inline-block;padding:2px 8px;margin:2px;font-size:12px;font-family:monospace;background:#f0f4ff;color:#1e40af;border:1px solid #bfdbfe;border-radius:4px;cursor:pointer;transition:all .15s" onclick="navigator.clipboard.writeText('${a}');this.style.background='#dcfce7';this.style.color='#166534';this.style.borderColor='#86efac';setTimeout(()=>{this.style.background='#f0f4ff';this.style.color='#1e40af';this.style.borderColor='#bfdbfe'},800)" title="點擊複製">${a}</span>`
         ).join('');
 
-        // 範例表格
         const makeTable = (rows) => rows.map(([syntax, desc]) =>
           `<tr><td>${syntax}</td><td>${desc}</td></tr>`
         ).join('');
@@ -2793,8 +2775,7 @@
             } else {
               updateFn(e, t);
             }
-            // 不能重置 e._rawInput = ""，否則同一次交互中 wrapper 若被觸發兩次
-            //（全域 change + flatpickr onClose），第二次的 raw 會變空 → 走 else 分支 → 覆蓋掉 "取消"
+            // 不能重置 e._rawInput：同一次交互可能觸發兩次（change 與 onClose），第二次會用空值蓋掉「取消」
           });
         },
         /* 取消狀態的CSS class */
@@ -3330,7 +3311,7 @@
           let t = JSON.parse(a),
             e = t.timestamp || 0,
             s = Date.now() - e;
-          // ec_settings 每次存設定與同步都會更新，比 ec_all_cache 裡那份新；優先用它，剛改的設定重新整理後才不會退回舊的
+          // ec_settings 比 ec_all_cache 裡那份新；不先用它，剛改的設定重新整理後會退回舊的
           let fresh = null;
           try { fresh = JSON.parse(localStorage.getItem("ec_settings")); } catch {}
           return (
@@ -3420,12 +3401,10 @@
           ecnData = [];
           transferData = [];
 
-          // 載入設定
           if (ecnFiles[ecnFileKeys.SETTINGS]) {
             settingsData = JSON.parse(ecnFiles[ecnFileKeys.SETTINGS].content);
             localStorage.setItem("ec_settings", JSON.stringify(settingsData));
           }
-          // 載入假日
           if (ecnFiles[ecnFileKeys.HOLIDAYS]) {
             const hData = JSON.parse(ecnFiles[ecnFileKeys.HOLIDAYS].content);
             if (hData.holidays) {
@@ -3565,7 +3544,7 @@
       /* 手動重新整理 */
       function manualRefresh() {
         // 筆記讀的是本機資料夾，不走 Gist 同步也不受冷卻時間限制
-        if (document.querySelector("#page21.active")) return NoteModule.reload();
+        if (document.querySelector("#page21.active")) return NoteModule.refresh();
         if (lastSyncTime) {
           let e = Date.now() - lastSyncTime.getTime();
           if (e < SYNC_COOLDOWN) {
@@ -3796,8 +3775,7 @@
           let { ID: d } = GIST_CONFIG[i.gist];
           let p = i.data();
           trimInputsOnly(p);
-          // removeInvalidRows 只跑純 GIST 頁面（有手動新增/刪除的頁）
-          // API 頁面（ecn/pcb_list/pcb_gpms/ecrecn）的 row 都是 API 產生，跑清理沒必要且有誤刪風險
+          // 只清純 GIST 頁面：API 頁面的列都是 API 產生，清理有誤刪風險
           const PURE_GIST_TYPES = new Set(["board_new", "board_maint", "pcb_maint", "plm", "assist", "disable", "bom", "dcc"]);
           if (PURE_GIST_TYPES.has(i.type)) {
             Utils.removeInvalidRows(p);
@@ -3830,7 +3808,6 @@
                 if (row._override && typeof row._override === "object") entry._override = row._override;
                 if (!entry.note && !entry._override) continue;
               } else {
-                // Legacy 手填列：整列保留
                 const { _dirty, _isNew, _origIdx, ...rest } = row;
                 entry = rest;
               }
@@ -4544,7 +4521,6 @@
             updateVal(e.dataset.ecnId, e.dataset.field, t);
           }));
 
-        // P1 表頭拖曳初始化
         const p1Thead = document.querySelector("#mainTable thead tr");
         if (p1Thead) {
           ColumnOrderModule.initDraggable("#mainTable", "p1", () => renderTable());
@@ -5460,7 +5436,6 @@
           updatePCBRow(r, a, t);
         });
 
-        // P3 表頭拖曳初始化
         const p3Thead = document.querySelector("#page3 table thead tr");
         if (p3Thead) {
           ColumnOrderModule.initDraggable("#page3 table", "p3", () => renderPCBKPITable());
@@ -6521,7 +6496,6 @@
           const pad = (n) => String(n).padStart(2, "0");
           return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())} ${pad(t.getHours())}:${pad(t.getMinutes())}`;
         },
-        // 更新指定頁面的時間標籤
         update(labelId, pageId) {
           const lbl = document.getElementById(labelId);
           if (!lbl) return;
@@ -6584,7 +6558,6 @@
           ecrEcnData = ecrEcnRows;
           initEcrEcnYearSelect();
 
-          // 重建年/月選單
           const ecnYears = [...new Set(ecnData.map((e) => e.month?.substring(0, 4)).filter(Boolean))].sort().reverse();
           Utils.initYearSelect("ecnYearSelect", ecnYears, "年", true);
           updateMonthSelect();
@@ -6599,7 +6572,6 @@
             else if (pageId === 20) { paginationState.p20 = 1; renderEcrEcnPage(); }
           }
 
-          // 各頁面右上角同步時間標籤
           [["fileTime_p1", 1], ["fileTime_p10", 10], ["fileTime_p20", 20]].forEach(([id, pid]) => {
             SyncTimeModule.update(id, pid);
           });
@@ -6871,7 +6843,7 @@
         return `<div class="flex justify-between items-center"><span>${left}</span>${right ? `<span>${right}</span>` : ''}</div>`;
       }
 
-      /* ---- ECR/ECN 月均趨勢 Area Chart ---- */
+      // ===== ECR/ECN 月均趨勢 Area Chart =====
       let _ecrAreaChart = null, _ecnAreaChart = null;
       let _ecrSelectedMonth = null, _ecnSelectedMonth = null;
       let _ecrTrendView = false, _ecnTrendView = false;
@@ -7176,7 +7148,6 @@
           _renderAreaChart('ecnAreaChart', ecnMonthly, ecnWeekly, ecnComp, selYear, 'ecn');
         }
  
-        // 表格
         const kw=(document.getElementById('searchBox_p20')?.value||'').trim();
         let filtered=rows; if(kw) filtered=SearchModule.filterData(filtered,'p20',kw);
         renderPaginationControls('pagination_p20','p20',filtered.length,'renderEcrEcnTable');
@@ -8698,9 +8669,7 @@
         if (!r.ok) throw new Error(`ECN overlay HTTP ${r.status}`);
         const gist = await r.json();
         const files = await handleTruncatedFiles(gist.files);
-        // ECN overlay
         OverlayModule.loadEcnFromArray(YearlyModule.loadAndMerge(files, PREFIX.ECN, null));
-        // settings / holidays
         if (files[FILES.SETTINGS]) {
           settingsData = JSON.parse(files[FILES.SETTINGS].content);
           localStorage.setItem("ec_settings", JSON.stringify(settingsData));
@@ -8726,7 +8695,9 @@
         const unsavedFab = document.getElementById("unsavedFab");
         const isFabVisible = unsavedFab && unsavedFab.style.display !== "none";
 
-        if (isFabVisible || (typeof dirtySections !== "undefined" && dirtySections.size > 0)) {
+        // 筆記打到一半的貼文也要提醒；note.js 沒載入成功時不能讓這裡出錯
+        const noteDraft = typeof NoteModule !== "undefined" && NoteModule.hasDraft();
+        if (isFabVisible || (typeof dirtySections !== "undefined" && dirtySections.size > 0) || noteDraft) {
           e.preventDefault();
           e.returnValue = "";
         }
