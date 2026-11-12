@@ -46,7 +46,7 @@ const NoteModule = (() => {
     ["bold", "bold", "粗體"], ["italic", "italic", "斜體"], ["underline", "underline", "底線"], ["strikethrough", "strike", "刪除線"], null,
     ["list-ul", "ul", "項目符號"], ["list-ol", "ol", "編號清單"], null,
     "mark", "color", "size", null,
-    ["quote-left", "quote", "引用"], ["link", "link", "連結"], ["square-code", "codeblock", "程式碼區塊"], ["table-cells", "table", "插入表格"], null,
+    ["quote-left", "quote", "引用"], ["link", "link", "連結"], ["square-code", "codeblock", "程式碼區塊"], "table", null,
     "more",
   ];
   const ICON_BTN ="flex items-center justify-center w-8 h-8 shrink-0 text-gray-500 rounded-md transition-colors hover:text-ms-blue hover:bg-gray-100";
@@ -71,7 +71,9 @@ const NoteModule = (() => {
   // 貼文有 format: "html" 的是新格式，沒有的是舊的 Markdown
   const bodyHtml = (p) => (p.format === "html" ? clean(p.body) : md(p.body));
   // 圖片路徑先收進 data-file：留在 src 瀏覽器會先向網站請求而失敗
-  const lazy = (html) => html.replace(/(<img\b[^>]*?\s)src="files\//g, '$1data-file="files/');
+  // 先填一張透明圖，沒有 src 的圖瀏覽器會畫出深色破圖框
+  const BLANK_IMG = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+  const lazy = (html) => html.replace(/(<img\b[^>]*?\s)src="files\//g, `$1src="${BLANK_IMG}" data-file="files/`);
   const plainText = (p) => (p.format === "html" ? new DOMParser().parseFromString(p.body, "text/html").body.textContent : p.body);
 
   // 內文裡的定位樣式可以蓋住整頁，一律拿掉
@@ -174,23 +176,28 @@ const NoteModule = (() => {
 
   /* 連續的圖片排成每列三張的方形縮圖；只在顯示時排，不存進貼文 */
   function groupImages(root) {
+    // 所有圖都收成縮圖塊（單張也是），隔著文字的也一樣，否則圖片會全幅撐開
     const imageOnly = (x) => x.nodeType === 1 && !x.textContent.trim() && !!x.querySelector("img") && !x.querySelector("table, pre, a");
     // 空行不算中斷
     const blank = (x) => (x.nodeType === 3 ? !x.data.trim() : x.nodeType === 1 && x.tagName !== "HR" && !x.textContent.trim() && !x.querySelector("img, table, pre, hr, a"));
     let run = [];
     const flush = () => {
       const imgs = run.flatMap((x) => (x.tagName === "IMG" ? [x] : [...x.querySelectorAll("img")]));
-      if (imgs.length > 1) {
-        const grid = document.createElement("div");
-        grid.className = "grid grid-cols-3 gap-1.5 my-2";
+      if (imgs.length) {
+        // 固定尺寸的方格（約同 Teams 的縮圖大小），貼文寬度不同時縮圖也一樣大
+        // 前面緊鄰著另一個縮圖格時直接併進去，不另起一格，位置才不會錯開
+        const prev = run[0].previousElementSibling;
+        const grid = prev && prev.classList.contains("note-grid") ? prev : document.createElement("div");
+        grid.className = "note-grid flex flex-wrap gap-1.5 my-2";
         run[0].before(grid);
         imgs.forEach((img) => {
           // 編輯時拖拉出來的寬高會破壞方形縮圖
           ["style", "width", "height"].forEach((a) => img.removeAttribute(a));
-          img.className = "w-full aspect-square object-cover !m-0";
+          img.className = "w-44 h-44 object-cover !m-0";
           grid.appendChild(img);
         });
-        run.forEach((x) => x.remove());
+        // 圖片本身已經搬進縮圖格，不能再刪
+        run.forEach((x) => { if (x.tagName !== "IMG") x.remove(); });
       }
       run = [];
     };
@@ -199,6 +206,13 @@ const NoteModule = (() => {
       else if (!(run.length && blank(x))) flush();
     }
     flush();
+    // 圖片和文字、附件擠在同一個段落裡時上面掃不到，改掃圖片自己的相鄰兄弟
+    [...root.querySelectorAll("img")].forEach((img) => {
+      if (img.closest("a, pre, table") || img.parentElement.classList.contains("note-grid")) return;
+      run = [img];
+      for (let n = img.nextSibling; n && (n.tagName === "IMG" || blank(n)); n = n.nextSibling) if (n.tagName === "IMG") run.push(n);
+      flush();
+    });
   }
 
   /* 舊寫法的引用換成現在的樣子；顯示前與進編輯器前都要做 */
@@ -230,14 +244,28 @@ const NoteModule = (() => {
   /* 把內文裡的 files/ 連結換成實際檔案，外部連結開新分頁 */
   function hydrate(el) {
     el.querySelectorAll(".note-md:not([contenteditable])").forEach(groupImages);
+    // 修掉結尾空行之前存的貼文，顯示時也把結尾空行剪掉
+    el.querySelectorAll(".note-md:not([contenteditable])").forEach((box) => {
+      while (box.lastElementChild && !box.lastElementChild.textContent.trim() &&
+        !box.lastElementChild.querySelector("img, table, hr") && box.lastElementChild.tagName !== "HR") {
+        box.lastElementChild.remove();
+      }
+    });
+    // 沒調過的欄寬顯示時拿掉，表格依內容自適應；拉過的欄寬保留（roosterjs 預設值依欄數是 120、100、70px）
+    el.querySelectorAll(".note-md:not([contenteditable]) :is(td, th)").forEach((c) => { if (/^(120|100|70)px$/.test(c.style.width)) c.style.width = ""; });
     const nameOf = (node, attr) => { try { return decodeURIComponent(node.getAttribute(attr).slice(6)); } catch { return ""; } };
     el.querySelectorAll("[data-book]").forEach((box) => {
       const b = bookOf(box.dataset.book);
       if (!b) return;
       box.querySelectorAll(".note-md img[data-file]").forEach((img) => {
-        fileUrl(b, nameOf(img, "data-file")).then((u) => (img.src = u)).catch(() => {});
+        // 佔位塊要等圖片真的畫出來才清掉，先清會先閃一下空白
+        fileUrl(b, nameOf(img, "data-file")).then((u) => {
+          img.onload = () => { img.style.background = "none"; img.style.minHeight = "0"; };
+          img.src = u;
+        }).catch(() => {});
         img.classList.add("cursor-zoom-in");
-        img.onclick = () => zoom(img.src, [...img.closest(".note-md").querySelectorAll("img[data-file]")].map((x) => x.src));
+        // 還沒從公槽載完的圖 src 是透明佔位圖，先不理會點擊，否則放大視窗是空白的
+        img.onclick = () => img.src.startsWith("data:") || zoom(img.src, [...img.closest(".note-md").querySelectorAll("img[data-file]")].map((x) => x.src));
       });
       box.querySelectorAll('.note-md a[href^="files/"]').forEach((a) => {
         const name = nameOf(a, "href");
@@ -453,10 +481,10 @@ const NoteModule = (() => {
           <span class="flex-1"></span>
           <div class="relative">
             <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400"></i>
-            <input id="noteSearch" oninput="NoteModule.search(this.value)" placeholder="搜尋所有筆記本" aria-label="搜尋所有筆記本" class="w-64 py-1.5 pl-9 pr-3 text-sm bg-gray-100 border border-transparent rounded-md outline-none transition-colors focus:bg-white focus:border-ms-blue">
+            <input id="noteSearch" oninput="NoteModule.search(this.value)" placeholder="搜尋所有貼文" aria-label="搜尋所有貼文" autocomplete="off" class="w-64 py-2 pl-9 pr-4 text-sm border border-gray-300 rounded-lg outline-none shadow-sm focus:ring-2 focus:ring-ms-blue">
           </div>        </header>
         <div class="flex-1 overflow-y-auto">
-          <div class="max-w-3xl mx-auto px-5 py-5 space-y-4">
+          <div class="max-w-5xl mx-auto px-5 py-5 space-y-4">
             <div id="noteComposer">
               <div id="noteComposeBar" class="bg-white border border-gray-200 rounded-lg shadow-sm">
                 <button onclick="NoteModule.compose(false)" class="flex items-center gap-3 w-full px-4 pt-3 pb-2 text-left text-gray-500 transition-colors hover:text-gray-800"><span>在頻道中張貼</span></button>
@@ -537,11 +565,19 @@ const NoteModule = (() => {
       </details>`;
     const palette = (icon, c, title, colors) => menu(icon, title,
       `<div class="grid grid-cols-4 gap-1.5">${colors.map((fill) => `<button ${hold} aria-label="${title} ${fill}" onclick="NoteModule.cmd('${k}','${c}','${fill}')" class="w-4 h-4 border border-gray-300 rounded transition-transform hover:scale-110" style="background:${fill}"></button>`).join("")}</div>`
-      + pick(c, "", "不套用", "w-full mt-2 py-0.5 text-xs text-gray-500 rounded transition-colors hover:bg-gray-100"),
+      + pick(c, "", "自動", "w-full mt-2 py-0.5 text-xs text-gray-500 rounded transition-colors hover:bg-gray-100"),
       "left-0 p-2 w-max");
     const ROW = "flex items-center gap-2 w-full px-3 py-1.5 text-sm text-left text-gray-700 rounded whitespace-nowrap transition-colors hover:bg-gray-100";
     const ico = (name) => `<i class="fa-solid fa-${name} w-4 text-center text-gray-500"></i>`;
     const size = menu("text-size", "文字大小", [["14pt", "大"], ["10.5pt", "中"], ["9pt", "小"]].map(([v, t]) => pick("size", v, t, ROW)).join(""), "left-0 p-1");
+    // 合併與分割放在表格圖示下方，才不會像「…」選單整片蓋住正在編輯的表格
+    const table = menu("table-cells", "表格", [
+      ["table", "", "table-cells", "插入表格"],
+      ["tableEven", "", "table-columns", "平均分配欄寬"],
+      ["tableEdit", "mergeCells", "table-cells-merge", "合併儲存格"],
+      ["tableEdit", "splitVertically", "table-cells-split", "分割成上下"],
+      ["tableEdit", "splitHorizontally", "table-cells-split", "分割成左右"],
+    ].map(([c, v, i, t]) => pick(c, v, ico(i) + t, ROW)).join(""), "left-0 p-1");
     const more = menu("ellipsis", "其他功能", `
       <div class="flex items-center gap-2 px-3 pt-1.5 pb-1 text-sm text-gray-700 whitespace-nowrap">${ico("font")}文字樣式</div>
       <div class="flex gap-1 px-3 pb-1.5">${[["0", "段落"], ["1", "標題 1"], ["2", "標題 2"], ["3", "標題 3"]].map(([v, t]) => pick("heading", v, t, "px-2 py-1 text-xs text-gray-700 bg-gray-100 rounded whitespace-nowrap transition-colors hover:bg-gray-200")).join("")}</div>
@@ -555,6 +591,7 @@ const NoteModule = (() => {
       : t === "mark" ? palette("highlighter", "mark", "螢光標示", MARK_COLORS)
       : t === "color" ? palette("palette", "color", "文字顏色", TEXT_COLORS)
       : t === "size" ? size
+      : t === "table" ? table
       : t === "more" ? more
       : btn(...t)).join("");
   }
@@ -649,6 +686,32 @@ const NoteModule = (() => {
           if (!pre && first.segmentType === "Text" && first.text === seg.text && next && next.segmentType === "SelectionMarker") {
             // 行首打「> 」是引用、「# 」到「### 」是標題
             const lead = /^(>|#{1,3})[ \u00a0]$/.exec(seg.text);
+            // 已經在引用或提醒區塊裡打「> 」是引用中引用：自己再包一層，不能用 toggleBlockQuote（它會把原本的區塊切掉）
+            const findQuote = (g) => {
+              for (const x of g.blocks || []) {
+                if (x.blockGroupType !== "FormatContainer") continue;
+                if (x.tagName === "blockquote" && x.blocks.includes(paragraph)) return x;
+                const hit = findQuote(x);
+                if (hit) return hit;
+              }
+              return null;
+            };
+            const outer = lead && lead[1] === ">" ? findQuote(model) : null;
+            if (lead && outer) {
+              emptyLine();
+              const at = outer.blocks.indexOf(paragraph);
+              // 內層不帶行內樣式，外觀交給 index.html 的巢狀引用規則
+              const box = roosterjs.createFormatContainer("blockquote", {});
+              box.blocks.push(paragraph);
+              roosterjs.mutateBlock(outer).blocks.splice(at, 1, box);
+              // 內層在外層結尾時補一個空行，游標才出得了內層
+              if (at === outer.blocks.length - 1) {
+                const tail = roosterjs.createParagraph();
+                tail.segments.push(roosterjs.createBr());
+                roosterjs.mutateBlock(outer).blocks.push(tail);
+              }
+              return true;
+            }
             if (lead) {
               emptyLine();
               after = lead[1] === ">" ? () => roosterjs.toggleBlockQuote(editor, QUOTE_FORMAT) : () => roosterjs.setHeadingLevel(editor, lead[1].length);
@@ -742,14 +805,18 @@ const NoteModule = (() => {
 
   /* 套用或清除螢光標示 */
   function setMark(ed, color) {
+    setSeg(ed, "backgroundColor", color, () => roosterjs.setBackgroundColor(ed, color || null));
+  }
+
+  /* 套用或清除選取文字的某個樣式；roosterjs 內建的設底色會收合選取、清文字顏色常清不掉，自己改才穩 */
+  function setSeg(ed, key, color, fallback) {
     const sel = ed.getDOMSelection();
-    // 游標沒有選取範圍時交給 roosterjs，讓接著打的字帶上螢光
-    if (!sel || sel.type !== "range" || sel.range.collapsed) return roosterjs.setBackgroundColor(ed, color || null);
-    // 有選取範圍時自己改：roosterjs 設完底色會把選取收起來，接著想再改文字顏色就得重選一次
+    // 游標沒有選取範圍時交給 roosterjs，讓接著打的字帶上這個樣式
+    if (!sel || sel.type !== "range" || sel.range.collapsed) return fallback();
     ed.formatContentModel((model) => {
       for (const x of roosterjs.getSelectedSegments(model, false, true)) {
-        if (color) x.format.backgroundColor = color;
-        else delete x.format.backgroundColor;
+        if (color) x.format[key] = color;
+        else delete x.format[key];
       }
       return true;
     });
@@ -798,7 +865,7 @@ const NoteModule = (() => {
       ul: () => R.toggleBullet(ed), ol: () => R.toggleNumbering(ed),
       // 行內程式碼本身有底色和外框，再加螢光會很亂
       mark: () => (arg && touchesCode(ed) ? ToastModule.show("行內程式碼不能加螢光標示", "warning") : setMark(ed, arg)),
-      color: () => R.setTextColor(ed, arg || null),
+      color: () => setSeg(ed, "textColor", arg, () => R.setTextColor(ed, arg || null)),
       heading: () => R.setHeadingLevel(ed, +arg), size: () => R.setFontSize(ed, arg),
       quote: () => R.toggleBlockQuote(ed, QUOTE_FORMAT),
       code: () => {
@@ -822,7 +889,28 @@ const NoteModule = (() => {
       hr: () => insertHtml(ed, "<hr><div><br></div>"),
       // 插入提醒區塊：第一行是標題，游標停在第二行
       alert: () => insertAndEnter(`<blockquote style="${alertStyle(arg)}">${alertTitle(arg)}<div><br></div></blockquote><div><br></div>`, true),
-      table: () => R.insertTable(ed, 3, 3),
+      table: () => { R.insertTable(ed, 3, 3); cmd(k, "tableAuto"); },
+      // 拿掉欄寬讓表格在編輯器裡就依內容自適應（空欄的最小寬度由 CSS 補）；拖拉過的欄寬之後照樣有效
+      tableAuto: () => ed.formatContentModel((model) => {
+        const t = R.getFirstSelectedTable(model)[0];
+        if (!t) return false;
+        R.mutateBlock(t).widths = [];
+        t.rows.forEach((r) => r.cells.forEach((c) => delete R.mutateBlock(c).format.width));
+        return true;
+      }),
+      // 合併要先在表格裡拖曳選取多格；游標不在表格裡時 roosterjs 不做事
+      tableEdit: () => R.editTable(ed, arg),
+      // 游標所在的表格欄寬平均分配並撐滿編輯區，拉醜了可以一鍵拉回對稱
+      tableEven: () => ed.formatContentModel((model) => {
+        const t = R.getFirstSelectedTable(model)[0];
+        if (!t) return false;
+        const cols = Math.max(...t.rows.map((r) => r.cells.length));
+        const w = Math.floor(($(k + "_body").clientWidth - 34) / cols);
+        if (!(w > 0)) return false;
+        R.mutateBlock(t).widths = Array.from({ length: cols }, () => w);
+        t.rows.forEach((r) => r.cells.forEach((c) => delete R.mutateBlock(c).format.width));
+        return true;
+      }),
       clear: () => R.clearFormat(ed), undo: () => R.undo(ed), redo: () => R.redo(ed),
       link: () => {
         const url = (prompt("連結網址", "https://") || "").trim();
@@ -837,6 +925,8 @@ const NoteModule = (() => {
     const t = document.createElement("template");
     t.innerHTML = bodyHtml(p);
     upgradeQuotes(t.content);
+    // 和顯示端同一條規則：沒調過的預設欄寬剝掉，編輯時表格也依內容自適應
+    t.content.querySelectorAll("td, th").forEach((c) => { if (/^(120|100|70)px$/.test(c.style.width)) c.style.width = ""; });
     const b = bookOf(p._book);
     for (const img of t.content.querySelectorAll('img[src^="files/"]')) {
       try { img.setAttribute("src", await fileUrl(b, decodeURIComponent(img.getAttribute("src").slice(6)))); } catch {}
@@ -871,6 +961,11 @@ const NoteModule = (() => {
     for (const a of t.content.querySelectorAll('a[href^="files/"]')) {
       const name = decodeURIComponent(a.getAttribute("href").slice(6));
       await adopt(name, S.attached.get(name));
+    }
+    // 結尾的空行存檔時拿掉：編輯器要靠它讓游標能離開表格等區塊，但張貼後只是多一截空白
+    while (t.content.lastElementChild && !t.content.lastElementChild.textContent.trim() &&
+      !t.content.lastElementChild.querySelector("img, table, hr") && t.content.lastElementChild.tagName !== "HR") {
+      t.content.lastElementChild.remove();
     }
     // 清掉讓游標停在空程式碼框裡用的零寬空白
     return clean(t.innerHTML).replace(/\u200b/g, "");
@@ -936,7 +1031,11 @@ const NoteModule = (() => {
     renderSidebar();
   }
 
+  let renderSeq = 0;
+
   async function renderList() {
+    // 讀檔期間使用者又點了別的頻道時，先點的這一輪作廢，舊畫面才不會蓋掉新畫面
+    const seq = ++renderSeq;
     // 重畫會連編輯中的表單一起重建，先把還沒存的內容留下來
     const draft = S.eds.noteEdit ? { title: $("noteEdit_title").value, ann: $("noteEdit_ann").checked, color: $("noteEdit_annColor").value, html: roosterjs.exportContent(S.eds.noteEdit) } : null;
     closeEditor("noteEdit");
@@ -946,7 +1045,14 @@ const NoteModule = (() => {
     if (q) {
       await loadAll();
       const text = (p) => [p.title, plainText(p), p.author, ...p.replies.map((r) => r.body)].join("\n").toLowerCase();
-      list = [...S.posts.values()].filter((p) => !p._trash && text(p).includes(q)).sort((x, y) => y.time - x.time);
+      // 和其他分頁同一套語法：空格＝都要有、!詞＝排除、|＝其中一個有
+      const terms = q.split(/\s+/).filter(Boolean);
+      const match = (s, t) => t.split("|").filter(Boolean).some((w) => s.includes(w));
+      list = [...S.posts.values()].filter((p) => {
+        if (p._trash) return false;
+        const s = text(p);
+        return terms.every((t) => (t[0] === "!" ? !(t.length > 1 && match(s, t.slice(1))) : match(s, t)));
+      }).sort((x, y) => y.time - x.time);
     } else if (b) {
       const names = await listNames(b, S.channel);
       const page = names.slice(0, S.shown);
@@ -954,6 +1060,7 @@ const NoteModule = (() => {
       list = page.map((n) => S.posts.get(b.key + "/" + n.slice(0, -5))).filter(Boolean);
       more = names.length > S.shown;
     }
+    if (seq !== renderSeq) return;
     const c = S.channel === TRASH ? { name: "垃圾桶", emoji: "🗑️" } : channelOf(b, S.channel);
     $("noteChEmoji").textContent = q ? "🔍" : b ? c.emoji || CH_EMOJI : "🔒";
     $("noteChName").textContent = q ? `搜尋結果　${list.length} 篇` : b ? c.name : "尚未連接筆記本";
@@ -1056,6 +1163,12 @@ const NoteModule = (() => {
     $("noteSearch").value = S.query = "";
     syncAuth();
     renderSidebar();
+    // 第一次進這個頻道要去公槽讀檔，先把標題換掉並顯示載入中，點了才有反應
+    const b = bookOf(key), c = ch === TRASH ? { name: "垃圾桶", emoji: "🗑️" } : channelOf(b, ch);
+    $("noteChEmoji").textContent = c.emoji || CH_EMOJI;
+    $("noteChName").textContent = c.name;
+    $("noteBookName").textContent = b.name;
+    $("noteList").innerHTML = `<div class="py-16 text-center text-gray-400"><i class="fa-solid fa-spinner fa-spin text-3xl"></i><div class="mt-3">載入中…</div></div>`;
     await renderList();
   }
 

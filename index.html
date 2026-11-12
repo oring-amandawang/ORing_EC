@@ -111,7 +111,7 @@
       .note-md a[href^="files/"][href$=".pdf" i]::before { content: "\f1c1"; color: #b30c01; }
       .note-md a[href^="files/"][href$=".txt" i]::before { content: "\e8c6"; }
       .note-md a[href^="files/"]:is([href$=".html" i], [href$=".htm" i])::before { content: "\e83d"; }
-      .note-md a[href^="files/"]:is([href$=".zip" i], [href$=".rar" i], [href$=".7z" i])::before { content: "\e5ee"; }
+      .note-md a[href^="files/"]:is([href$=".zip" i], [href$=".rar" i], [href$=".7z" i])::before { content: "\f1c6"; }
       /* roosterjs 表格的「＋」把手照瀏覽器預設的尺寸算法畫，Tailwind 改了全站的算法後會歪掉 */
       #horizontalInserter, #verticalInserter { box-sizing: content-box; }
       /* 貼進來的內容每一行自帶邊距、字型、換行方式；程式碼區塊裡不採用，否則行距不一、長行會折行 */
@@ -129,15 +129,33 @@
       /* 提醒區塊：編輯器不保留 class，類型靠行內樣式的底色來認，這裡依底色補上圖示 */
       /* 底色與圖示要和 note.js 的 ALERTS 一致；字型名稱與編碼同上 */
       .note-md blockquote:is([style*="239, 246, 255"], [style*="236, 253, 245"], [style*="250, 245, 255"], [style*="255, 251, 235"], [style*="254, 242, 242"]) { padding: .75rem 1rem .75rem 2.75rem !important; }
-      .note-md blockquote:is([style*="239, 246, 255"], [style*="236, 253, 245"], [style*="250, 245, 255"], [style*="255, 251, 235"], [style*="254, 242, 242"])::before { position: absolute; top: .75rem; left: 1rem; display: flex; align-items: center; height: 1.42rem; font: 900 1rem/1 "Font Awesome 7 Pro"; }
-      .note-md blockquote[style*="239, 246, 255"]::before { content: "\f05a"; color: #3b82f6; }
-      .note-md blockquote[style*="236, 253, 245"]::before { content: "\f0eb"; color: #10b981; }
-      .note-md blockquote[style*="250, 245, 255"]::before { content: "\f06a"; color: #a855f7; }
-      .note-md blockquote[style*="255, 251, 235"]::before { content: "\f071"; color: #f59e0b; }
-      .note-md blockquote[style*="254, 242, 242"]::before { content: "\f057"; color: #ef4444; }
+      /* 圖示掛在標題那一行上並對它垂直置中，標題字級改大改小都跟著對齊 */
+      .note-md blockquote:is([style*="239, 246, 255"], [style*="236, 253, 245"], [style*="250, 245, 255"], [style*="255, 251, 235"], [style*="254, 242, 242"]) > :first-child { position: relative; }
+      .note-md blockquote:is([style*="239, 246, 255"], [style*="236, 253, 245"], [style*="250, 245, 255"], [style*="255, 251, 235"], [style*="254, 242, 242"]) > :first-child::before { position: absolute; top: 50%; left: -1.75rem; transform: translateY(-50%); font: 900 1rem/1 "Font Awesome 7 Pro"; }
+      .note-md blockquote[style*="239, 246, 255"] > :first-child::before { content: "\f05a"; color: #3b82f6; }
+      .note-md blockquote[style*="236, 253, 245"] > :first-child::before { content: "\f0eb"; color: #10b981; }
+      .note-md blockquote[style*="250, 245, 255"] > :first-child::before { content: "\f06a"; color: #a855f7; }
+      .note-md blockquote[style*="255, 251, 235"] > :first-child::before { content: "\f071"; color: #f59e0b; }
+      .note-md blockquote[style*="254, 242, 242"] > :first-child::before { content: "\f057"; color: #ef4444; }
       .note-md table { border-collapse: collapse; margin: .5rem 0; }
       .note-md th, .note-md td { border: 1px solid #e1dfdd; padding: .25rem .6rem; }
       .note-md th { background: #faf9f8; }
+      /* 圖片存檔時帶著固定的 max-width 像素值，視窗較窄時要以貼文寬度為上限才不會凸出去 */
+      /* vertical-align 統一向上，同一行的圖不會因為基線對齊而高低錯開 */
+      .note-md img { max-width: 100% !important; vertical-align: top; }
+      /* 縮圖格裡的圖是固定方格，不能套 auto 高度，否則每張高度隨原圖比例跑掉 */
+      .note-md img:not(.note-grid img) { height: auto; }
+      /* 還沒從公槽讀到的圖先畫灰底加圖片圖示的佔位塊，載入完成由 hydrate 清掉 */
+      .note-md img[data-file] { min-height: 6rem; border-radius: .375rem; background: #f3f4f6 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512' fill='%23d1d5db'%3E%3Cpath d='M448 80c8.8 0 16 7.2 16 16V415.8l-5-6.5-136-176c-4.5-5.9-11.6-9.3-19-9.3s-14.4 3.4-19 9.3L202 340.7l-30.5-42.7C167 291.7 159.8 288 152 288s-15 3.7-19.5 10.1l-80 112-4.5 6.2V96c0-8.8 7.2-16 16-16H448zM64 32C28.7 32 0 60.7 0 96V416c0 35.3 28.7 64 64 64H448c35.3 0 64-28.7 64-64V96c0-35.3-28.7-64-64-64H64zm80 192a48 48 0 1 0 0-96 48 48 0 1 0 0 96z'/%3E%3C/svg%3E") center / 2rem no-repeat; }
+      /* 引用中的引用：內縮一層的白底小框，在灰引用與提醒的底色上都看得清楚 */
+      .note-md blockquote blockquote { margin: .375rem 0; padding: .5rem .75rem; background: rgba(255, 255, 255, .6); border: 1px solid #e5e7eb; border-radius: .5rem; }
+      /* 編輯中的表格沒有固定欄寬，空欄給最小寬度才點得到 */
+      .note-md[contenteditable] :is(th, td) { min-width: 4rem; }
+      /* 張貼後的表格：框線淡色、四角圓角，蓋過 roosterjs 寫進儲存格的行內框線；圓角要 separate 才會生效 */
+      .note-md:not([contenteditable]) table { border-collapse: separate !important; border-spacing: 0 !important; border: 1px solid #e5e7eb; border-radius: .5rem; display: block; width: max-content; max-width: 100% !important; overflow-x: auto; }
+      .note-md:not([contenteditable]) :is(th, td) { border-width: 0 1px 1px 0 !important; border-color: #e5e7eb !important; }
+      .note-md:not([contenteditable]) tr > :last-child { border-right-width: 0 !important; }
+      .note-md:not([contenteditable]) tr:last-child > * { border-bottom-width: 0 !important; }
       .note-md img { max-width: 100%; border-radius: .5rem; border: 1px solid #e1dfdd; margin: .5rem 0; }
       .note-md hr { margin: .75rem 0; border-color: #e1dfdd; }
 
