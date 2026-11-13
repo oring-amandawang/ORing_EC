@@ -107,6 +107,8 @@
       /* 圖示的字型名稱與編碼跟著 ec-fonts 站台的 Font Awesome 版本走，換大版本時這裡要一起改 */
       .note-md a[href^="files/"] { display: inline-block; max-width: 20rem; margin: .25rem .5rem .25rem 0; padding: .5rem .75rem; overflow: hidden; vertical-align: middle; color: #1f2937; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: .375rem; cursor: pointer; }
       .note-md a[href^="files/"]:hover { text-decoration: none; background: #f3f4f6; }
+      /* 檔案區塊的字體鎖定：放在標題行或改過字級的文字旁會繼承格式，區塊又不可編輯改不回來 */
+      .note-md a[href^="files/"], .note-md a[href^="files/"] * { font-size: .875rem !important; font-weight: 400 !important; font-style: normal !important; color: #1f2937 !important; text-decoration: none !important; }
       .note-md a[href^="files/"]::before { content: "\f15b"; margin-right: .5rem; font: 900 1.125rem "Font Awesome 7 Pro"; color: #6b7280; vertical-align: -.1em; }
       .note-md a[href^="files/"]:is([href$=".xls" i], [href$=".xlsx" i], [href$=".xlsm" i], [href$=".csv" i])::before { content: "\f1c3"; color: #107c41; }
       .note-md a[href^="files/"]:is([href$=".doc" i], [href$=".docx" i])::before { content: "\f1c2"; color: #185abd; }

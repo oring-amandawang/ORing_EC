@@ -25,6 +25,8 @@ const NoteModule = (() => {
   // 取自 Teams 的調色盤
   const TEXT_COLORS = ["#B6424C", "#CD5937", "#FDC030", "#BDCB4C", "#2B9B62", "#37797B", "#1E53A3", "#A5397A"];
   const MARK_COLORS = ["#DF9299", "#F4A593", "#FDD472", "#E5F18F", "#82CDA8", "#9DD9DB", "#C7D4E8", "#EBD3E1"];
+  // 儲存格底色取自 Notion 表格的十色；第一格白色等同清除
+  const CELL_COLORS = ["#FFFFFF", "#F1F1EF", "#F3EEEE", "#F8ECDF", "#FAF3DD", "#EEF3ED", "#E9F3F7", "#F6F3F8", "#F9F2F5", "#FAECEC"];
   // 傳給 roosterjs 蓋掉它預設的引用樣式；值要和 index.html 的 .note-md blockquote 一致
   const QUOTE_FORMAT = { backgroundColor: "#f9fafb", borderLeft: "1px solid #e5e7eb", borderTop: "1px solid #e5e7eb", borderRight: "1px solid #e5e7eb", borderBottom: "1px solid #e5e7eb", paddingLeft: "16px", paddingRight: "16px", paddingTop: "12px", paddingBottom: "12px", marginLeft: "0", marginRight: "0", marginTop: "8px", marginBottom: "8px" };
   // 提醒區塊是帶行內底色的引用；編輯器不保留 class，類型靠底色來認
@@ -580,7 +582,10 @@ const NoteModule = (() => {
       ["tableEdit", "mergeCells", "table-cells-merge", "合併儲存格"],
       ["tableEdit", "splitVertically", "table-cells-split", "分割成上下"],
       ["tableEdit", "splitHorizontally", "table-cells-split", "分割成左右"],
-    ].map(([c, v, i, t]) => pick(c, v, ico(i) + t, ROW)).join(""), "left-0 p-1");
+    ].map(([c, v, i, t]) => pick(c, v, ico(i) + t, ROW)).join("")
+      + `<div class="my-1 border-t border-gray-100"></div>
+      <div class="flex items-center gap-2 px-3 pt-1.5 pb-1 text-sm text-gray-700 whitespace-nowrap">${ico("fill-drip")}儲存格底色</div>
+      <div class="grid grid-cols-5 gap-1.5 w-max px-3 pb-1.5">${CELL_COLORS.map((fill) => `<button ${hold} aria-label="儲存格底色 ${fill}" onclick="NoteModule.cmd('${k}','cellShade','${fill === "#FFFFFF" ? "" : fill}')" class="w-4 h-4 border border-gray-300 rounded transition-transform hover:scale-110" style="background:${fill}"></button>`).join("")}</div>`, "left-0 p-1");
     const more = menu("ellipsis", "其他功能", `
       <div class="flex items-center gap-2 px-3 pt-1.5 pb-1 text-sm text-gray-700 whitespace-nowrap">${ico("font")}文字樣式</div>
       <div class="flex gap-1 px-3 pb-1.5">${[["0", "段落"], ["1", "標題 1"], ["2", "標題 2"], ["3", "標題 3"]].map(([v, t]) => pick("heading", v, t, "px-2 py-1 text-xs text-gray-700 bg-gray-100 rounded whitespace-nowrap transition-colors hover:bg-gray-200")).join("")}</div>
@@ -1055,6 +1060,8 @@ const NoteModule = (() => {
         });
         fitTables(k);
       },
+      // 空字串清掉底色回到白底
+      cellShade: () => R.setTableCellShade(ed, arg || null),
       // 合併要先在表格裡拖曳選取多格；游標不在表格裡時 roosterjs 不做事
       // roosterjs 動過結構後會把當下欄寬寫死回每一格，原本是自適應的表格要再清一次才會維持自適應
       tableEdit: () => {
