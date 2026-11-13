@@ -299,7 +299,7 @@ const NoteModule = (() => {
           <i class="fa-solid fa-code"></i><span class="flex-1"></span>
           <button type="button" aria-label="複製" class="text-sm text-gray-500 transition-colors hover:text-ms-blue"><i class="fa-solid fa-clone"></i></button>
         </div>
-        <div class="note-code overflow-auto max-h-96 font-mono text-xs leading-relaxed"></div>`;
+        <div class="note-code overflow-auto max-h-96 font-mono text-sm leading-relaxed"></div>`;
       // 擠在同一個區塊裡的多行要拆開（舊 Markdown 的 code、由選取文字轉成的區塊）
       const packed = (x) => !x.children.length || (x.children.length === 1 && x.firstElementChild.tagName === "CODE");
       for (const x of packed(pre) ? [pre] : [...pre.children].filter((c) => !c.children.length && c.textContent.includes("\n"))) {
@@ -636,6 +636,43 @@ const NoteModule = (() => {
         // 游標在儲存格裡按 Ctrl+A 先只選那一格的內容，已整格選取時再按才交給預設的全選
         if (event.eventType === "keyDown") {
           const e = event.rawEvent;
+          // 程式碼區塊裡連按兩次 Enter（這行和上一行都是空行）＝收掉空行並跳出區塊，與結尾三個反引號同效
+          if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+            let handled = false;
+            editor.formatContentModel((model) => {
+              let pre = null, para = null;
+              const walk = (g) => (g.blocks || []).forEach((b) => {
+                if (b.blockGroupType === "FormatContainer" && b.tagName === "pre") {
+                  b.blocks.forEach((p) => { if (p.blockType === "Paragraph" && p.segments.some((s) => s.segmentType === "SelectionMarker")) { pre = b; para = p; } });
+                } else if (b.blockType === "Table") b.rows.forEach((r) => r.cells.forEach(walk));
+                else if (b.blocks) walk(b);
+              });
+              walk(model);
+              const at = pre ? model.blocks.indexOf(pre) : -1;
+              if (!pre || at < 0) return false;
+              const empty = (p) => p && p.blockType === "Paragraph" && !p.segments.some((s) => s.segmentType === "Text" && s.text.trim());
+              const i = pre.blocks.indexOf(para);
+              if (i < 1 || !empty(para) || !empty(pre.blocks[i - 1])) return false;
+              const marker = para.segments.find((s) => s.segmentType === "SelectionMarker");
+              roosterjs.mutateBlock(pre).blocks.splice(i - 1, 2);
+              if (!pre.blocks.length) {
+                const keep = roosterjs.createParagraph();
+                keep.segments.push(roosterjs.createBr());
+                pre.blocks.push(keep);
+              }
+              let below = model.blocks[at + 1];
+              if (!below || below.blockType !== "Paragraph") {
+                below = roosterjs.createParagraph();
+                below.segments.push(roosterjs.createBr());
+                model.blocks.splice(at + 1, 0, below);
+              }
+              roosterjs.mutateBlock(below).segments.unshift(marker);
+              handled = true;
+              return true;
+            });
+            if (handled) e.preventDefault();
+            return;
+          }
           if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "a") return;
           const sel = editor.getDOMSelection(), node = sel && sel.type === "range" && sel.range.startContainer;
           const cell = node && (node.nodeType === 1 ? node : node.parentElement).closest("td, th");
