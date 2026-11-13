@@ -87,6 +87,9 @@
       /* 筆記頁自己有捲軸，外層不再捲動，否則整個筆記區會被往上推、下方留白 */
       /* min-height 要一起設：外層不是捲動容器之後會被內容撐高，筆記區就超出畫面、自己的捲軸也失效 */
       div:has(> #page21.active) { overflow: clip; min-height: 0; }
+      /* 彈窗開著時，在彈窗或遮罩上滾滾輪不能帶動後面的頁面；backdrop 預設不是捲動容器，要先給 overflow 才會生效 */
+      dialog:modal { overscroll-behavior: contain; }
+      dialog::backdrop { overflow: hidden; overscroll-behavior: contain; }
       /* Tailwind 會清掉標題與清單的預設樣式，Markdown 內容需要補回 */
       .note-md h1, .note-md h2, .note-md h3 { font-weight: 700; margin: .75rem 0 .25rem; }
       .note-md h1 { font-size: 1.2rem; } .note-md h2 { font-size: 1.1rem; } .note-md h3 { font-size: 1rem; }
@@ -138,7 +141,8 @@
       .note-md blockquote[style*="255, 251, 235"] > :first-child::before { content: "\f071"; color: #f59e0b; }
       .note-md blockquote[style*="254, 242, 242"] > :first-child::before { content: "\f057"; color: #ef4444; }
       .note-md table { border-collapse: collapse; margin: .5rem 0; }
-      .note-md th, .note-md td { border: 1px solid #e1dfdd; padding: .25rem .6rem; }
+      /* 左右內距比照 Notion，35px 的最窄欄才塞得下兩個半形數字 */
+      .note-md th, .note-md td { border: 1px solid #e1dfdd; padding: .25rem .5rem; }
       .note-md th { background: #faf9f8; }
       /* 圖片存檔時帶著固定的 max-width 像素值，視窗較窄時要以貼文寬度為上限才不會凸出去 */
       /* vertical-align 統一向上，同一行的圖不會因為基線對齊而高低錯開 */
@@ -149,8 +153,10 @@
       .note-md img[data-file] { min-height: 6rem; border-radius: .375rem; background: #f3f4f6 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512' fill='%23d1d5db'%3E%3Cpath d='M448 80c8.8 0 16 7.2 16 16V415.8l-5-6.5-136-176c-4.5-5.9-11.6-9.3-19-9.3s-14.4 3.4-19 9.3L202 340.7l-30.5-42.7C167 291.7 159.8 288 152 288s-15 3.7-19.5 10.1l-80 112-4.5 6.2V96c0-8.8 7.2-16 16-16H448zM64 32C28.7 32 0 60.7 0 96V416c0 35.3 28.7 64 64 64H448c35.3 0 64-28.7 64-64V96c0-35.3-28.7-64-64-64H64zm80 192a48 48 0 1 0 0-96 48 48 0 1 0 0 96z'/%3E%3C/svg%3E") center / 2rem no-repeat; }
       /* 引用中的引用：內縮一層的白底小框，在灰引用與提醒的底色上都看得清楚 */
       .note-md blockquote blockquote { margin: .375rem 0; padding: .5rem .75rem; background: rgba(255, 255, 255, .6); border: 1px solid #e5e7eb; border-radius: .5rem; }
-      /* 編輯中的表格沒有固定欄寬，空欄給最小寬度才點得到 */
-      .note-md[contenteditable] :is(th, td) { min-width: 4rem; }
+      /* 編輯中的表格空欄給最小寬度才點得到；35px 比照 Notion 的最窄欄 */
+      .note-md[contenteditable] :is(th, td) { min-width: 35px; }
+      /* 連續英數字串沒有斷行點會把儲存格的最小寬度撐到整串長，欄寬就拖不窄；允許必要時在任意字元斷行 */
+      .note-md :is(th, td) { overflow-wrap: anywhere; }
       /* 張貼後的表格：框線淡色、四角圓角，蓋過 roosterjs 寫進儲存格的行內框線；圓角要 separate 才會生效 */
       .note-md:not([contenteditable]) table { border-collapse: separate !important; border-spacing: 0 !important; border: 1px solid #e5e7eb; border-radius: .5rem; display: block; width: max-content; max-width: 100% !important; overflow-x: auto; }
       .note-md:not([contenteditable]) :is(th, td) { border-width: 0 1px 1px 0 !important; border-color: #e5e7eb !important; }
@@ -1586,11 +1592,11 @@
         </div>
         <div class="mb-4">
           <label class="block mb-2 font-semibold text-sm text-gray-700">帳號</label>
-          <input class="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:border-ms-blue focus:ring-2 focus:ring-ms-blue" id="loginUser" placeholder="請輸入帳號" type="text" onkeyup="if (event.key === 'Enter') checkLogin();" />
+          <input class="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:border-ms-blue focus:ring-2 focus:ring-ms-blue" id="loginUser" placeholder="請輸入帳號" type="text" onkeydown="if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) checkLogin();" />
         </div>
         <div class="mb-6">
           <label class="block mb-2 font-semibold text-sm text-gray-700">密碼</label>
-          <input class="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:border-ms-blue focus:ring-2 focus:ring-ms-blue" id="loginPass" onkeyup="if (event.key === 'Enter') checkLogin();" placeholder="請輸入密碼" type="password" />
+          <input class="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:border-ms-blue focus:ring-2 focus:ring-ms-blue" id="loginPass" onkeydown="if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) checkLogin();" placeholder="請輸入密碼" type="password" />
         </div>
         <div class="flex gap-3">
           <button class="flex-1 py-2 font-bold text-gray-700 bg-gray-200 rounded-md transition-colors hover:bg-gray-300" onclick="closeLogin()">取消</button>
@@ -1612,7 +1618,7 @@
         </div>
         <div class="mb-6">
           <label class="block mb-2 font-semibold text-sm text-gray-700">確認新密碼</label>
-          <input class="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:border-ms-blue focus:ring-2 focus:ring-ms-blue" id="cpConfirm" onkeyup="if (event.key === 'Enter') submitChangePassword();" placeholder="再輸入一次" type="password" autocomplete="new-password" />
+          <input class="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:border-ms-blue focus:ring-2 focus:ring-ms-blue" id="cpConfirm" onkeydown="if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) submitChangePassword();" placeholder="再輸入一次" type="password" autocomplete="new-password" />
         </div>
         <div class="flex gap-3">
           <button class="flex-1 py-2 font-bold text-gray-700 bg-gray-200 rounded-md transition-colors hover:bg-gray-300" id="cpCancelBtn" onclick="closeChangePassword()">取消</button>

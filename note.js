@@ -39,6 +39,9 @@ const NoteModule = (() => {
   };
   // 手打的標記，例如 [!NOTE]
   const ALERT_MARK = /^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \u00a0]*/i;
+  // 比對用：瀏覽器與編輯器存色碼時會改寫成 rgb()，要先換成同一種寫法
+  const toRgb = (c) => { const x = document.createElement("i"); x.style.color = c; return x.style.color; };
+  const ALERT_BGS = new Set(Object.values(ALERTS).map((a) => toRgb(a[3])));
   const alertStyle = (type) => `background-color:${ALERTS[type][3]};border:1px solid ${ALERTS[type][4]}`;
   const alertTitle = (type) => `<div><b style="color:${ALERTS[type][5]}">${ALERTS[type][0]}</b></div>`;
   // [圖示, 指令, 提示文字]；null 為分隔線，字串為下拉選單
@@ -217,12 +220,11 @@ const NoteModule = (() => {
 
   /* 舊寫法的引用換成現在的樣子；顯示前與進編輯器前都要做 */
   function upgradeQuotes(root) {
-    const alertBgs = new Set(Object.values(ALERTS).map((a) => a[3]).map((hex) => { const n = parseInt(hex.slice(1), 16); return `rgb(${n >> 16}, ${(n >> 8) & 255}, ${n & 255})`; }));
     root.querySelectorAll("blockquote").forEach((q) => {
       const m = ALERT_MARK.exec(q.textContent);
       if (!m) {
         // 舊貼文存著左邊粗線的行內樣式，拿掉後外觀全交給 index.html
-        if (!alertBgs.has(q.style.backgroundColor)) q.removeAttribute("style");
+        if (!ALERT_BGS.has(q.style.backgroundColor)) q.removeAttribute("style");
         return;
       }
       // 舊貼文與 Markdown 回覆是用 [!NOTE] 標記寫的
@@ -573,6 +575,7 @@ const NoteModule = (() => {
     // 合併與分割放在表格圖示下方，才不會像「…」選單整片蓋住正在編輯的表格
     const table = menu("table-cells", "表格", [
       ["table", "", "table-cells", "插入表格"],
+      ["tableAuto", "", "text-width", "自適應欄寬"],
       ["tableEven", "", "table-columns", "平均分配欄寬"],
       ["tableEdit", "mergeCells", "table-cells-merge", "合併儲存格"],
       ["tableEdit", "splitVertically", "table-cells-split", "分割成上下"],
@@ -625,6 +628,19 @@ const NoteModule = (() => {
       },
       onPluginEvent(event) {
         if (!editor) return;
+        // 游標在儲存格裡按 Ctrl+A 先只選那一格的內容，已整格選取時再按才交給預設的全選
+        if (event.eventType === "keyDown") {
+          const e = event.rawEvent;
+          if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "a") return;
+          const sel = editor.getDOMSelection(), node = sel && sel.type === "range" && sel.range.startContainer;
+          const cell = node && (node.nodeType === 1 ? node : node.parentElement).closest("td, th");
+          if (!cell || (!sel.range.collapsed && sel.range.toString().trim() === cell.textContent.trim())) return;
+          e.preventDefault();
+          const range = document.createRange();
+          range.selectNodeContents(cell);
+          editor.setDOMSelection({ type: "range", range, isReverted: false });
+          return;
+        }
         // 注音選字途中不能動內容，等選字結束（compositionEnd）再處理
         if (event.eventType === "input" ? event.rawEvent.isComposing : event.eventType !== "compositionEnd") return;
         // 行首語法要等內容改完才能套用區塊格式，先記下來
@@ -774,11 +790,94 @@ const NoteModule = (() => {
         markdownPlugin(), new R.AutoFormatPlugin({ autoBullet: true, autoNumbering: true, autoLink: true, autoHorizontalLine: true }), new R.ShortcutPlugin(), new R.HyperlinkPlugin(), new R.WatermarkPlugin("輸入內容")],
       initialModel: html ? R.createModelFromHtml(html) : undefined,
     });
+    // 用捕獲階段才搶得到把手的 mousedown，接管的理由見 dragCol
+    S.eds[k]._down = (e) => dragCol(k, e);
+    document.addEventListener("mousedown", S.eds[k]._down, true);
+    fitTables(k);
   }
 
   function closeEditor(k) {
-    if (S.eds[k]) { S.eds[k].dispose(); delete S.eds[k]; }
+    if (S.eds[k]) {
+      document.removeEventListener("mousedown", S.eds[k]._down, true);
+      S.eds[k].dispose();
+      delete S.eds[k];
+    }
     if ($(k + "_body")) $(k + "_body").innerHTML = "";
+  }
+
+  /* 找出右緣最貼近把手位置的欄 */
+  function colAt(k, e) {
+    if (!(e.target.nodeType === 1 && getComputedStyle(e.target).cursor === "col-resize")) return null;
+    let hit = null;
+    [...$(k + "_body").querySelectorAll("table")].forEach((t, ti) => {
+      [...t.rows[0].cells].forEach((c, ci) => {
+        const r = c.getBoundingClientRect(), d = Math.abs(r.right - e.clientX);
+        if (d < 8 && (!hit || d < hit.d)) hit = { t, ti, ci, d, w: r.width };
+      });
+    });
+    return hit;
+  }
+
+  /* 對指定表格的指定欄寫回欄寬；w 為 0 代表清掉、依內容自適應 */
+  function setColWidth(k, hit, w) {
+    S.eds[k].formatContentModel((model) => {
+      const list = [];
+      const walk = (g) => g.blocks && g.blocks.forEach((b) => (b.blockType === "Table" ? list.push(b) : walk(b)));
+      walk(model);
+      const t = list[hit.ti];
+      if (!t) return false;
+      // 欄寬存在每一格的 format.width；寬度為 0 時編輯器不會輸出，等同清掉
+      t.rows.forEach((r) => {
+        const c = r.cells[hit.ci];
+        if (!c) return;
+        if (w) roosterjs.mutateBlock(c).format.width = w + "px";
+        else delete roosterjs.mutateBlock(c).format.width;
+      });
+      if (t.widths.length) roosterjs.mutateBlock(t).widths[hit.ci] = w;
+      return true;
+    });
+    fitTables(k);
+  }
+
+  let lastDown = { t: 0, x: 0, y: 0 };
+
+  /* 接管欄寬拖拉：只動把手左邊那一欄 */
+  // roosterjs 自己的拖拉是左右兩欄互讓；這裡在按下時就攔走，過程只改左欄，表格總寬跟著增減（Notion 的行為）
+  // 最窄 35px，與樣式表裡儲存格的最小欄寬一致
+  function dragCol(k, e) {
+    if (e.button !== 0) return;
+    const hit = colAt(k, e);
+    if (!hit) return;
+    const x0 = e.clientX;
+    e.stopPropagation();
+    e.preventDefault();
+    // 點兩下格線＝清掉左欄的固定寬度改依內容自適應；放開拖拉會重畫把手，瀏覽器的 dblclick 落不到把手上，所以自己數
+    if (Date.now() - lastDown.t < 400 && Math.abs(e.clientX - lastDown.x) < 5 && Math.abs(e.clientY - lastDown.y) < 5) {
+      lastDown.t = 0;
+      setColWidth(k, hit, 0);
+      return;
+    }
+    lastDown = { t: Date.now(), x: e.clientX, y: e.clientY };
+    const width = (m) => Math.max(35, Math.round(hit.w + m.clientX - x0));
+    const move = (m) => [...hit.t.rows].forEach((r) => r.cells[hit.ci] && (r.cells[hit.ci].style.width = width(m) + "px"));
+    const up = (m) => {
+      document.removeEventListener("mousemove", move, true);
+      document.removeEventListener("mouseup", up, true);
+      m.stopPropagation();
+      // 沒拖動就不寫回，把手才不會被重畫，第二下點擊才接得上
+      if (width(m) !== Math.round(hit.w)) setColWidth(k, hit, width(m));
+    };
+    document.addEventListener("mousemove", move, true);
+    document.addEventListener("mouseup", up, true);
+  }
+
+  /* 依欄寬狀態同步表格本身的寬度 */
+  // 瀏覽器會把沒有自身寬度的表格鎖在容器寬以內，欄寬寫死的表格要給 max-content 才拉得出去、出現水平捲軸
+  function fitTables(k) {
+    if (!$(k + "_body")) return;
+    [...$(k + "_body").querySelectorAll("table")].forEach((t) => {
+      t.style.width = [...t.querySelectorAll("td, th")].some((c) => c.style.width) ? "max-content" : "";
+    });
   }
 
   /* 在游標處插入一段 HTML */
@@ -889,29 +988,68 @@ const NoteModule = (() => {
       hr: () => insertHtml(ed, "<hr><div><br></div>"),
       // 插入提醒區塊：第一行是標題，游標停在第二行
       alert: () => insertAndEnter(`<blockquote style="${alertStyle(arg)}">${alertTitle(arg)}<div><br></div></blockquote><div><br></div>`, true),
-      table: () => { R.insertTable(ed, 3, 3); cmd(k, "tableAuto"); },
-      // 拿掉欄寬讓表格在編輯器裡就依內容自適應（空欄的最小寬度由 CSS 補）；拖拉過的欄寬之後照樣有效
-      tableAuto: () => ed.formatContentModel((model) => {
-        const t = R.getFirstSelectedTable(model)[0];
-        if (!t) return false;
-        R.mutateBlock(t).widths = [];
-        t.rows.forEach((r) => r.cells.forEach((c) => delete R.mutateBlock(c).format.width));
-        return true;
-      }),
+      // 插入就平均分配成滿版，打字依欄寬換行，行為才穩定可預期；想縮回內容寬再按自適應欄寬
+      table: () => { R.insertTable(ed, 3, 3); cmd(k, "tableEven"); },
+      // 拿掉欄寬讓表格在編輯器裡依內容自適應（空欄的最小寬度由 CSS 補）；拖拉過的欄寬之後照樣有效
+      tableAuto: () => {
+        ed.formatContentModel((model) => {
+          const t = R.getFirstSelectedTable(model)[0];
+          if (!t) return false;
+          R.mutateBlock(t).widths = [];
+          t.rows.forEach((r) => r.cells.forEach((c) => delete R.mutateBlock(c).format.width));
+          return true;
+        });
+        fitTables(k);
+      },
       // 合併要先在表格裡拖曳選取多格；游標不在表格裡時 roosterjs 不做事
-      tableEdit: () => R.editTable(ed, arg),
+      // roosterjs 動過結構後會把當下欄寬寫死回每一格，原本是自適應的表格要再清一次才會維持自適應
+      tableEdit: () => {
+        const sel = ed.getDOMSelection();
+        const el = sel && (sel.table || (sel.type === "range" && (sel.range.startContainer.nodeType === 1 ? sel.range.startContainer : sel.range.startContainer.parentElement).closest("table")));
+        // 不能用 [style*=width] 選，每一格都有 border-width 會誤判
+        const auto = el && ![...el.querySelectorAll("td, th")].some((c) => c.style.width);
+        R.editTable(ed, arg);
+        if (auto) cmd(k, "tableAuto");
+      },
       // 游標所在的表格欄寬平均分配並撐滿編輯區，拉醜了可以一鍵拉回對稱
-      tableEven: () => ed.formatContentModel((model) => {
-        const t = R.getFirstSelectedTable(model)[0];
-        if (!t) return false;
-        const cols = Math.max(...t.rows.map((r) => r.cells.length));
-        const w = Math.floor(($(k + "_body").clientWidth - 34) / cols);
-        if (!(w > 0)) return false;
-        R.mutateBlock(t).widths = Array.from({ length: cols }, () => w);
-        t.rows.forEach((r) => r.cells.forEach((c) => delete R.mutateBlock(c).format.width));
-        return true;
-      }),
-      clear: () => R.clearFormat(ed), undo: () => R.undo(ed), redo: () => R.redo(ed),
+      tableEven: () => {
+        ed.formatContentModel((model) => {
+          const t = R.getFirstSelectedTable(model)[0];
+          if (!t) return false;
+          const cols = Math.max(...t.rows.map((r) => r.cells.length));
+          const w = Math.floor(($(k + "_body").clientWidth - 34) / cols);
+          if (!(w > 0)) return false;
+          R.mutateBlock(t).widths = Array.from({ length: cols }, () => w);
+          t.rows.forEach((r) => r.cells.forEach((c) => delete R.mutateBlock(c).format.width));
+          return true;
+        });
+        fitTables(k);
+      },
+      clear: () => {
+        // 不用 roosterjs 的 clearFormat：它會把引用從選取處切成兩半，選整行時文字格式也只是搬到段落上沒有清掉；這裡只清文字格式
+        ed.formatContentModel((model) => {
+          // 提醒區塊的標題行要保留粗體與顏色，先記下那些段落
+          const titles = new Set();
+          const findTitles = (group) => group.blocks.forEach((b) => {
+            // 選取從引用最前面開始時，編輯器會在標題前多塞一個只有游標的空段落，要跳過它
+            const title = b.blockGroupType === "FormatContainer" && b.tagName === "blockquote" && ALERT_BGS.has(toRgb(b.format.backgroundColor))
+              && b.blocks.find((p) => p.blockType === "Paragraph" && p.segments.some((s) => s.segmentType !== "SelectionMarker"));
+            if (title) titles.add(title);
+            if (b.blocks) findTitles(b);
+          });
+          findTitles(model);
+          const hits = R.getSelectedSegmentsAndParagraphs(model, true, false);
+          for (const [seg, para] of hits) {
+            if (titles.has(para)) continue;
+            const p = para && R.mutateBlock(para);
+            seg.format = {};
+            delete seg.code;
+            if (p) p.segmentFormat = undefined;
+          }
+          return hits.length > 0;
+        }, { apiName: "clearFormat" });
+      },
+      undo: () => R.undo(ed), redo: () => R.redo(ed),
       link: () => {
         const url = (prompt("連結網址", "https://") || "").trim();
         if (url && url !== "https://") R.insertLink(ed, url);
@@ -1184,15 +1322,16 @@ const NoteModule = (() => {
   }
 
   /* 筆記本與頻道共用的「圖示＋名稱」設定視窗 */
+  // 用原生 dialog：Esc、點外面關閉、焦點圈禁、關閉後焦點回到原按鈕都由瀏覽器提供
   function dialog(o) {
     $("noteDialog").innerHTML = `
-    <div class="fixed inset-0 z-[70] flex items-center justify-center bg-black/30" onclick="if(event.target===this)NoteModule.closeDialog()">
-      <div class="w-[26rem] p-5 bg-white rounded-xl shadow-2xl note-fade" role="dialog" aria-label="${o.title}">
+    <dialog closedby="any" onclose="NoteModule.closeDialog()" aria-label="${o.title}" class="w-[26rem] p-5 bg-white border-0 rounded-xl shadow-2xl note-fade backdrop:bg-black/30">
+      <div>
         <div class="mb-4 font-bold text-lg text-gray-800">${o.title}</div>
         ${o.editable ? `
         <div class="flex gap-2">
           <input id="noteDlgEmoji" value="${esc(o.emoji)}" maxlength="8" aria-label="圖示" class="w-14 text-2xl text-center bg-gray-100 rounded-md outline-none focus:ring-2 focus:ring-ms-blue">
-          <input id="noteDlgName" value="${esc(o.name)}" placeholder="${o.placeholder}" aria-label="名稱" onkeydown="if(event.key==='Enter'){${o.onSave}}" class="flex-1 px-3 py-2 bg-gray-100 rounded-md outline-none focus:ring-2 focus:ring-ms-blue">
+          <input id="noteDlgName" value="${esc(o.name)}" placeholder="${o.placeholder}" aria-label="名稱" onkeydown="if(event.key==='Enter'&&!event.isComposing&&event.keyCode!==229){${o.onSave}}" class="flex-1 px-3 py-2 bg-gray-100 rounded-md outline-none focus:ring-2 focus:ring-ms-blue">
         </div>
         <div class="flex flex-wrap gap-1 mt-3">
           ${EMOJIS.map((e) => `<button onclick="document.getElementById('noteDlgEmoji').value='${e}'" class="w-9 h-9 text-xl rounded-md transition-colors hover:bg-gray-100">${e}</button>`).join("")}
@@ -1206,7 +1345,8 @@ const NoteModule = (() => {
           ${o.editable ? `<button onclick="${o.onSave}" class="text-sm btn-primary">${o.saveText}</button>` : ""}
         </div>
       </div>
-    </div>`;
+    </dialog>`;
+    $("noteDialog").firstElementChild.showModal();
     if (o.editable) $("noteDlgName").focus();
   }
 
@@ -1219,19 +1359,20 @@ const NoteModule = (() => {
     zoomList = list;
     const many = list.length > 1;
     $("noteDialog").innerHTML = `
-    <div class="fixed inset-0 z-[70] overflow-auto bg-black/70 ${$("noteDialog").firstElementChild ? "" : "note-fade"}" role="dialog" aria-label="圖片放大檢視" tabindex="-1" onclick="if(event.target.tagName!=='IMG')NoteModule.closeDialog()">
+    <dialog closedby="any" onclose="NoteModule.closeDialog()" aria-label="圖片放大檢視" tabindex="-1" class="fixed inset-0 m-0 p-0 w-full h-full max-w-none max-h-none overflow-auto bg-black/70 border-0 outline-none ${$("noteDialog").firstElementChild ? "" : "note-fade"}" onclick="if(event.target.tagName!=='IMG')NoteModule.closeDialog()">
       <div class="flex w-max min-w-full min-h-full p-6 ${many ? "pb-24" : ""}">
         <img src="${esc(src)}" alt="" draggable="false" class="m-auto bg-white rounded shadow-2xl cursor-zoom-in" onpointerdown="NoteModule.zoomDrag(event)" onclick="if(this.dataset.dragged){this.dataset.dragged='';return}NoteModule.zoomTo(this, this.style.width ? 0 : Math.max(this.naturalWidth, this.getBoundingClientRect().width * 2))" onwheel="event.preventDefault();NoteModule.zoomTo(this, this.getBoundingClientRect().width * (event.deltaY < 0 ? 1.25 : 0.8))">
       </div>
       ${many ? `<div data-thumbs class="fixed bottom-4 left-1/2 flex gap-2 max-w-[90vw] p-2 overflow-x-auto bg-black/60 rounded-lg -translate-x-1/2" onclick="event.stopPropagation()">
         ${list.map((u) => `<img src="${esc(u)}" alt="" onclick="NoteModule.zoom(this.src)" class="shrink-0 w-14 h-14 object-cover bg-white rounded cursor-pointer border-2 ${u === src ? "border-ms-blue" : "border-transparent opacity-60 hover:opacity-100"}">`).join("")}
       </div>` : ""}
-    </div>`;
+    </dialog>`;
     const box = $("noteDialog").firstElementChild;
+    // 換圖是整個重建 dialog，要重新 showModal 才會回到最上層
+    box.showModal();
     box.onkeydown = (e) => {
-      const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key], next = list[list.indexOf(src) + step];
-      if (e.key === "Escape") closeDialog();
-      else if (next) zoom(next);
+      const next = list[list.indexOf(src) + ({ ArrowLeft: -1, ArrowRight: 1 }[e.key] || 0)];
+      if (next && next !== src) zoom(next);
     };
     zoomTo(box.querySelector("img"), 0);
     box.focus();
@@ -1241,7 +1382,7 @@ const NoteModule = (() => {
   function zoomTo(img, width) {
     img.style.maxWidth = width ? "none" : "calc(100vw - 3rem)";
     // 有縮圖列時多留下方空間，圖片才不會被縮圖蓋住
-    img.style.maxHeight = width ? "none" : `calc(100vh - ${img.closest("[role=dialog]").querySelector("[data-thumbs]") ? 7.5 : 3}rem)`;
+    img.style.maxHeight = width ? "none" : `calc(100vh - ${img.closest("dialog").querySelector("[data-thumbs]") ? 7.5 : 3}rem)`;
     img.style.width = width ? Math.max(50, Math.round(width)) + "px" : "";
     img.classList.toggle("cursor-zoom-in", !width);
     img.classList.toggle("cursor-grab", !!width);
@@ -1249,7 +1390,7 @@ const NoteModule = (() => {
 
   /* 放大後按住拖曳移動畫面；有拖動就記下來，放開時的點擊才不會把圖縮回去 */
   function zoomDrag(e) {
-    const img = e.currentTarget, box = img.closest("[role=dialog]");
+    const img = e.currentTarget, box = img.closest("dialog");
     let moved = 0;
     e.preventDefault();
     // 抓住指標，拖到圖片外面也繼續跟；抓不到（指標已放開）就只在圖片範圍內有效

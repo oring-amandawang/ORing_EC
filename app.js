@@ -3120,7 +3120,7 @@
             ...(config.extraFields || []).map(f => `<th class="px-2 py-1.5 border-b text-gray-600 font-semibold">${esc(f.label)}</th>`),
           ].join("");
 
-          return `<div class="fixed inset-0 z-[10003] flex hidden items-center justify-center bg-gray-900 bg-opacity-60 backdrop-blur-sm" id="${MODAL_ID}">
+          return `<dialog id="${MODAL_ID}" aria-label="批次貼上" class="p-0 bg-transparent border-0 overflow-visible backdrop:bg-gray-900/60 backdrop:backdrop-blur-sm">
             <div class="w-[720px] max-h-[90vh] flex flex-col bg-white rounded-xl shadow-2xl">
               <div class="flex gap-4 px-6 pt-5 pb-3">
                 ${extraFieldsHtml}
@@ -3152,7 +3152,7 @@
                 </button>
               </div>
             </div>
-          </div>`;
+          </dialog>`;
         }
 
         function _ensureModal(config) {
@@ -3162,6 +3162,8 @@
           el = document.getElementById(MODAL_ID);
           el.querySelector("#bp_pasteArea").addEventListener("input", () => _onPreview(config));
           el.querySelector("#bp_cancelBtn").addEventListener("click", close);
+          // 按 Esc 由瀏覽器關閉時也要清掉暫存狀態
+          el.addEventListener("close", close);
           el.querySelector("#bp_confirmBtn").addEventListener("click", () => _onConfirm(config));
           (config.extraFields || []).forEach(f => {
             const sel = el.querySelector(`#bp_extra_${f.key}`);
@@ -3195,12 +3197,12 @@
             }
           });
 
-          el.classList.remove("hidden");
+          el.showModal();
           setTimeout(() => el.querySelector("#bp_pasteArea")?.focus(), 50);
         }
         function close() {
           const el = document.getElementById(MODAL_ID);
-          if (el) el.classList.add("hidden");
+          if (el && el.open) el.close();
           _parsedRows = [];
           _activeConfig = null;
         }
