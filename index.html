@@ -115,6 +115,10 @@
       .note-md a[href^="files/"][href$=".txt" i]::before { content: "\e8c6"; }
       .note-md a[href^="files/"]:is([href$=".html" i], [href$=".htm" i])::before { content: "\e83d"; }
       .note-md a[href^="files/"]:is([href$=".zip" i], [href$=".rar" i], [href$=".7z" i])::before { content: "\f1c6"; }
+      /* 編輯中的檔案區塊滑過右側出現刪除鈕；點擊由 note.js 依座標判斷 */
+      .note-md[contenteditable] a[href^="files/"] { position: relative; padding-right: 2rem; }
+      .note-md[contenteditable] a[href^="files/"]::after { content: "\f00d"; position: absolute; top: 50%; right: .6rem; transform: translateY(-50%); font: 900 .75rem/1 "Font Awesome 7 Pro"; color: transparent; }
+      .note-md[contenteditable] a[href^="files/"]:hover::after { color: #9ca3af; }
       /* roosterjs 表格的「＋」把手照瀏覽器預設的尺寸算法畫，Tailwind 改了全站的算法後會歪掉 */
       #horizontalInserter, #verticalInserter { box-sizing: content-box; }
       /* 貼進來的內容每一行自帶邊距、字型、換行方式；程式碼區塊裡不採用，否則行距不一、長行會折行 */
@@ -140,6 +144,13 @@
       .note-md blockquote[style*="250, 245, 255"] > :first-child::before { content: "\f06a"; color: #a855f7; }
       .note-md blockquote[style*="255, 251, 235"] > :first-child::before { content: "\f071"; color: #f59e0b; }
       .note-md blockquote[style*="254, 242, 242"] > :first-child::before { content: "\f057"; color: #ef4444; }
+      /* 提醒標題的顏色與粗體固定為該型的預設樣式，刪掉重打、套別的顏色、按自動都不會跑掉 */
+      .note-md blockquote:is([style*="239, 246, 255"], [style*="236, 253, 245"], [style*="250, 245, 255"], [style*="255, 251, 235"], [style*="254, 242, 242"]) > :first-child, .note-md blockquote:is([style*="239, 246, 255"], [style*="236, 253, 245"], [style*="250, 245, 255"], [style*="255, 251, 235"], [style*="254, 242, 242"]) > :first-child * { font-weight: 700 !important; }
+      .note-md blockquote[style*="239, 246, 255"] > :first-child, .note-md blockquote[style*="239, 246, 255"] > :first-child * { color: #1d4ed8 !important; }
+      .note-md blockquote[style*="236, 253, 245"] > :first-child, .note-md blockquote[style*="236, 253, 245"] > :first-child * { color: #047857 !important; }
+      .note-md blockquote[style*="250, 245, 255"] > :first-child, .note-md blockquote[style*="250, 245, 255"] > :first-child * { color: #7e22ce !important; }
+      .note-md blockquote[style*="255, 251, 235"] > :first-child, .note-md blockquote[style*="255, 251, 235"] > :first-child * { color: #b45309 !important; }
+      .note-md blockquote[style*="254, 242, 242"] > :first-child, .note-md blockquote[style*="254, 242, 242"] > :first-child * { color: #b91c1c !important; }
       .note-md table { border-collapse: collapse; margin: .5rem 0; }
       /* 左右內距比照 Notion，35px 的最窄欄才塞得下兩個半形數字 */
       .note-md th, .note-md td { border: 1px solid #e1dfdd; padding: .25rem .5rem; }

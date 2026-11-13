@@ -793,6 +793,13 @@ const NoteModule = (() => {
     // 用捕獲階段才搶得到把手的 mousedown，接管的理由見 dragCol
     S.eds[k]._down = (e) => dragCol(k, e);
     document.addEventListener("mousedown", S.eds[k]._down, true);
+    // 檔案區塊右側的刪除鈕是 CSS 畫的 ::after，點不到實體元素，用座標判斷
+    $(k + "_body").onmousedown = (e) => {
+      const a = e.target.closest ? e.target.closest('a[href^="files/"]') : null;
+      if (!a || a.getBoundingClientRect().right - e.clientX > 32) return;
+      e.preventDefault();
+      removeFileLink(k, a.getAttribute("href"));
+    };
     fitTables(k);
   }
 
@@ -803,6 +810,32 @@ const NoteModule = (() => {
       delete S.eds[k];
     }
     if ($(k + "_body")) $(k + "_body").innerHTML = "";
+    // 取消、張貼、儲存最後都走到這裡：這個表單上傳過、沒被任何已存貼文引用的檔就是孤兒
+    // 上傳當下就寫檔，在編輯器刪掉區塊或取消貼文時檔案都還在，不清會越積越多
+    const mine = [...S.attached].filter(([, v]) => v.endsWith("|" + k));
+    mine.forEach(([n]) => S.attached.delete(n));
+    const byBook = {};
+    mine.forEach(([n, v]) => (byBook[v.split("|")[0]] ||= []).push(n));
+    Object.entries(byBook).forEach(([bk, names]) => { const b = bookOf(bk); if (b) removeUnused(b, names).catch(() => {}); });
+  }
+
+  /* 刪掉一個檔案區塊（模型裡是帶 link 的文字段） */
+  // shortcut: 同一個檔插了兩個區塊時只刪第一個，正常操作不會這樣插，誤刪時按復原即可
+  function removeFileLink(k, href) {
+    S.eds[k].formatContentModel((model) => {
+      let hit = false;
+      const walk = (g) => {
+        if (g.blocks) g.blocks.forEach(walk);
+        if (g.blockType === "Table") g.rows.forEach((r) => r.cells.forEach(walk));
+        if (g.blockType !== "Paragraph") return;
+        // 區塊不可編輯後在模型裡是 Entity，舊貼文未加屬性前是帶 link 的文字段，兩種都要認
+        const match = (s) => (s.link && s.link.format.href === href) || (s.segmentType === "Entity" && s.wrapper && s.wrapper.getAttribute("href") === href);
+        const keep = g.segments.filter((s) => hit || !(match(s) && (hit = true)));
+        if (keep.length !== g.segments.length) roosterjs.mutateBlock(g).segments = keep;
+      };
+      walk(model);
+      return hit;
+    });
   }
 
   /* 找出右緣最貼近把手位置的欄 */
@@ -961,7 +994,28 @@ const NoteModule = (() => {
     });
     ({
       bold: () => R.toggleBold(ed), italic: () => R.toggleItalic(ed), underline: () => R.toggleUnderline(ed), strike: () => R.toggleStrikethrough(ed),
-      ul: () => R.toggleBullet(ed), ol: () => R.toggleNumbering(ed),
+      ul: () => R.toggleBullet(ed),
+      // roosterjs 的編號會跨儲存格延續（上格 1.2.3 下格接 4.）；自成一段的清單要把起始號改回 1
+      ol: () => {
+        R.toggleNumbering(ed);
+        ed.formatContentModel((model) => {
+          let item = null, parent = null;
+          const picked = (g) => g.blocks.some((b) => b.blockType === "Paragraph" && b.segments.some((s) => s.segmentType === "SelectionMarker" || s.isSelected));
+          const walk = (g) => (g.blocks || []).forEach((b) => {
+            if (item) return;
+            if (b.blockGroupType === "ListItem") { if (b.levels[0] && b.levels[0].listType === "OL" && picked(b)) { item = b; parent = g; } }
+            else if (b.blockType === "Table") b.rows.forEach((r) => r.cells.forEach(walk));
+            else if (b.blocks) walk(b);
+          });
+          walk(model);
+          if (!item) return false;
+          const prev = parent.blocks[parent.blocks.indexOf(item) - 1];
+          // 前面緊接著編號清單代表是同一串的延續，不改
+          if (prev && prev.blockGroupType === "ListItem" && prev.levels[0] && prev.levels[0].listType === "OL") return false;
+          R.mutateBlock(item).levels[0].format.startNumberOverride = 1;
+          return true;
+        });
+      },
       // 行內程式碼本身有底色和外框，再加螢光會很亂
       mark: () => (arg && touchesCode(ed) ? ToastModule.show("行內程式碼不能加螢光標示", "warning") : setMark(ed, arg)),
       color: () => setSeg(ed, "textColor", arg, () => R.setTextColor(ed, arg || null)),
@@ -1069,6 +1123,8 @@ const NoteModule = (() => {
     for (const img of t.content.querySelectorAll('img[src^="files/"]')) {
       try { img.setAttribute("src", await fileUrl(b, decodeURIComponent(img.getAttribute("src").slice(6)))); } catch {}
     }
+    // 理由見 attachFiles 的插入
+    t.content.querySelectorAll('a[href^="files/"]').forEach((a) => a.setAttribute("contenteditable", "false"));
     return t.innerHTML;
   }
 
@@ -1098,7 +1154,9 @@ const NoteModule = (() => {
     }
     for (const a of t.content.querySelectorAll('a[href^="files/"]')) {
       const name = decodeURIComponent(a.getAttribute("href").slice(6));
-      await adopt(name, S.attached.get(name));
+      await adopt(name, (S.attached.get(name) || "").split("|")[0]);
+      // 不可編輯只是編輯器內的行為，不存進貼文
+      a.removeAttribute("contenteditable");
     }
     // 結尾的空行存檔時拿掉：編輯器要靠它讓游標能離開表格等區塊，但張貼後只是多一截空白
     while (t.content.lastElementChild && !t.content.lastElementChild.textContent.trim() &&
@@ -1632,9 +1690,11 @@ const NoteModule = (() => {
     // 在編輯器裡複製圖片貼到別篇時兩篇會共用同一個檔，別篇（含垃圾桶）還在用的不能刪
     await loadAll();
     await loadPosts(b, TRASH, await listNames(b, TRASH));
-    const others = [...S.posts.values()].filter((x) => x !== skip && x._book === b.key).map((x) => x.body + x.replies.map((r) => r.body).join("\n")).join("\n");
+    // 不能用字串比對貼文內容：檔名含 & 之類的字元時，存檔的 HTML 會序列化成 &amp;
+    const used = new Set();
+    [...S.posts.values()].filter((x) => x !== skip && x._book === b.key).forEach((x) => filesIn(x).forEach((n) => used.add(n)));
     for (const name of new Set(names)) {
-      if (others.includes("files/" + name)) continue;
+      if (used.has(name)) continue;
       try { await b.filesDir.removeEntry(name); } catch (e) { if (e.name !== "NotFoundError") throw e; }
     }
   }
@@ -1685,10 +1745,11 @@ const NoteModule = (() => {
         status.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i>上傳中… ${++done}/${files.length}`;
         const name = fileName(f);
         await writeFile(b.filesDir, name, f);
-        S.attached.set(name, b.key);
+        S.attached.set(name, b.key + "|" + k);
         // 表單已經關掉或換了一個編輯器就不再插入，檔案留在資料夾裡
         if (S.eds[k] !== ed) break;
-        insertHtml(ed, f.type.startsWith("image/") ? `<img src="${await fileUrl(b, name)}">` : `<a href="files/${name}" title="${esc(f.name)}">${esc(f.name)}</a>&nbsp;`);
+        // 檔案區塊整塊不可編輯：名稱不能改字，Backspace 一次刪整塊
+        insertHtml(ed, f.type.startsWith("image/") ? `<img src="${await fileUrl(b, name)}">` : `<a href="files/${name}" title="${esc(f.name)}" contenteditable="false">${esc(f.name)}</a>&nbsp;`);
       }
     } finally {
       S.uploading--;
